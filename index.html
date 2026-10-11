@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>आपुलकी (Aapulki) — Gifts that carry a little love</title>
+  <meta name="description" content="Aapulki - Thoughtful, personalized and sustainable gifts curated for your loved ones.">
+  
+  <!-- Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Nunito:wght@400;600;700;800&family=Noto+Sans+Devanagari:wght@600;700&display=swap" rel="stylesheet">
+  
+  <!-- Favicon -->
+  <link rel="icon" type="image/png" href="images/logo.png">
+  <link rel="apple-touch-icon" href="images/logo.png">
+
+  <!-- External Stylesheet -->
+  <link rel="stylesheet" href="style.css?v=8">
+</head>
+<body>
+  <!-- Accessibility skip link -->
+  <a class="skip" href="#app" id="skip">Skip to main content</a>
+
+  <!-- Global Header -->
+  <header class="hdr" id="hdr">
+    <div class="wrap">
+      <a class="brand" href="#home" aria-label="आपुलकी Aapulki home">
+        <span class="mark" id="mk"><img src="images/logo.png" alt="आपुलकी (Aapulki) Logo" class="brand-logo-img"></span>
+        <b>आपुलकी</b>
+        <small>Aapulki</small>
+      </a>
+      <nav class="tabs" id="nav" aria-label="Main Navigation"></nav>
+      <span class="spacer"></span>
+      <button class="iconbtn" id="cart" aria-label="Cart"></button>
+    </div>
+  </header>
+
+  <!-- Main View Container -->
+  <main id="app" tabindex="-1"></main>
+
+  <!-- Global Footer -->
+  <footer id="ft"></footer>
+
+  <!-- Floating Action Area -->
+  <div class="fab" id="fab"></div>
+
+  <!-- Toast Notification Container -->
+  <div id="toast" class="msg ok hide" role="status"></div>
+
+  <!-- Screen Reader Live Announcements -->
+  <div id="live" class="sr" role="status" aria-live="polite"></div>
+
+  <!-- Recipient Modal Dialog -->
+  <dialog id="dlg" aria-labelledby="dt">
+    <h2 id="dt">Save to a recipient?</h2>
+    <p class="mut">Choose who this gift is for. You can change this later in My Recipients.</p>
+    <label for="rs">Recipient</label>
+    <select class="in" id="rs">
+      <option>Aai</option>
+      <option>Baba</option>
+      <option>Add a new person…</option>
+    </select>
+    <div class="row" style="margin-top:24px;justify-content:flex-end">
+      <button class="btn sec sm" data-close>Not now</button>
+      <button class="btn sm" data-close data-toast="Saved to your gifts.">Save gift</button>
+    </div>
+  </dialog>
+
+  <!-- Main JavaScript File -->
+  <script src="script.js?v=8"></script>
+</body>
+</html>
