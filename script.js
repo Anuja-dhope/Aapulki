@@ -31,7 +31,9 @@ const I = {
   pen: '<path d="M4 20l1-4L16 5l3 3L8 19zM14 7l3 3"/>',
   plus: '<path d="M12 5v14M5 12h14"/>',
   trash: '<polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/>',
-  search: '<circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>'
+  search: '<circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>',
+  box: '<path d="M3 8l9-5 9 5v8l-9 5-9-5z"/><path d="M3 8l9 5 9-5M12 13v8"/>',
+  x: '<path d="M6 6l12 12M18 6L6 18"/>'
 };
 
 // --- Custom Palette Themed Icons ---
@@ -423,7 +425,7 @@ const $ = s => document.querySelector(s);
 const btn = (t, h, c = '') => `<a class="btn ${c}" href="${h}">${t}</a>`;
 const progress = (labels, cur) =>
   `<ol class="steps" aria-label="Progress">${labels
-    .map((l, i) => `<li class="${i < cur ? 'done' : ''}" ${i == cur ? 'aria-current="step"' : ''}>${l}</li>`)
+    .map((l, i) => `<li class="${i < cur ? 'done' : ''}" ${i == cur ? 'aria-current="step"' : ''}>${l}${i < cur ? '<span class="sr"> (completed)</span>' : ''}</li>`)
     .join('')}</ol>`;
 const msg = (k, i, t) => `<div class="msg ${k}">${ic(i)}<span>${t}</span></div>`;
 const chips = (a, single) =>
@@ -444,16 +446,6 @@ const IMAGES = {
   kansa: 'images/kansa.jpg',
   mithai: 'images/mithai.jpg',
   warli: 'images/warli.jpg'
-};
-
-const prod = (n, t, p, i, bg, pid = '') => {
-  const imgSrc = IMAGES[pid] || 'images/candle.jpg';
-  return `<article class="card prod"><div class="th" style="background:var(--${bg})"><img src="${imgSrc}" alt="${n}" class="p-img" loading="lazy" onerror="this.style.display='none'"><button class="iconbtn save" aria-label="Save ${n}" data-sv="${pid || 'candle'}">${ic(
-    'heart',
-    20
-  )}</button></div><div class="bd"><div class="chips" style="margin-bottom:8px">${t
-    .map((x, k) => `<span class="tag ${k ? 'l' : ''}">${x}</span>`)
-    .join('')}</div><h3>${n}</h3><div class="row" style="justify-content:space-between"><span class="price">${p}</span><a class="btn ghost sm" href="#product/${pid || 'candle'}">View details</a></div></div></article>`;
 };
 
 const OA = 'birthday,anniv,thanks,wedding,festival,house,justbc,oother';
@@ -515,12 +507,13 @@ let RECIPIENTS = [
   { id: 'r4', name: 'Rohan', who: 'sibling', avatar: 'R', bg: 'peach', ints: ['tech', 'music', 'food'], occs: '18 Jan (Birthday)', notes: 'Loves gourmet snacks and unique gadgets.' }
 ];
 
-let CART = [
-  { id: 'diya', qty: 1, pe: true, nm: 'Aai', ln: 'With Love', wr: true, ws: 'festive' }
-];
+let CART = [];
+
+let ORDERS = [];
+let CHK = { name: '', phone: '', addr: '', city: '', pin: '', pay: 'upi' };
 
 try {
-  SV = JSON.parse(localStorage.getItem('aaps') || '["diya","candle"]');
+  SV = JSON.parse(localStorage.getItem('aaps') || '[]');
   PS = JSON.parse(localStorage.getItem('aapo') || '{}');
   const storedOcc = localStorage.getItem('aapo_occasions');
   if (storedOcc) OCCASIONS = JSON.parse(storedOcc);
@@ -528,6 +521,8 @@ try {
   if (storedRec) RECIPIENTS = JSON.parse(storedRec);
   const storedCart = localStorage.getItem('aapo_cart');
   if (storedCart) CART = JSON.parse(storedCart);
+  ORDERS = JSON.parse(localStorage.getItem('aapo_orders') || '[]');
+  Object.assign(CHK, JSON.parse(localStorage.getItem('aapo_chk') || '{}'));
 } catch (e) {}
 
 const sp = () => {
@@ -537,10 +532,280 @@ const sp = () => {
     localStorage.setItem('aapo_occasions', JSON.stringify(OCCASIONS));
     localStorage.setItem('aapo_recipients', JSON.stringify(RECIPIENTS));
     localStorage.setItem('aapo_cart', JSON.stringify(CART));
+    localStorage.setItem('aapo_orders', JSON.stringify(ORDERS));
+    localStorage.setItem('aapo_chk', JSON.stringify(CHK));
   } catch (e) {}
 };
 
+// --- Cart Totals, Checkout Validation & Form Errors ---
+const FREE_AT = 999;
+const DEL_FEE = 60;
+const DEMO_PAY = 'Demo payment – no real charge';
+const PAY = { upi: 'UPI / Google Pay / PhonePe', card: 'Credit / Debit Card', cod: 'Cash on Delivery' };
+
+const cartTotals = () => {
+  const lines = CART.map(item => {
+    const p = PR.find(x => x.id === item.id) || PR[0];
+    const pe = !!(item.pe && p.pe);
+    const qty = item.qty || 1;
+    const unit = p.p + (pe ? PE : 0) + (item.wr ? WR : 0);
+    return { item, p, pe, qty, unit, line: unit * qty };
+  });
+  const sub = lines.reduce((a, l) => a + l.line, 0);
+  const del = sub >= FREE_AT || !sub ? 0 : DEL_FEE;
+  return {
+    lines,
+    count: lines.reduce((a, l) => a + l.qty, 0),
+    sub,
+    del,
+    tot: sub + del,
+    eta: Math.max(0, ...lines.map(l => l.p.d + (l.pe ? 1 : 0)))
+  };
+};
+
+const totalsDl = t =>
+  `<dl class="sy"><div><dt>Subtotal (${t.count} ${t.count === 1 ? 'item' : 'items'})</dt><dd>${inr(t.sub)}</dd></div><div><dt>Delivery charges</dt><dd>${
+    t.del ? inr(t.del) : '<span class="tag g">FREE</span>'
+  }</dd></div><div class="tot"><dt>Final total</dt><dd>${inr(t.tot)}</dd></div></dl>`;
+
+const vC = c => {
+  const e = {};
+  const phone = (c.phone || '').replace(/[\s-]/g, '');
+  const pin = (c.pin || '').trim();
+  if (!(c.name || '').trim()) e.name = 'Please enter the full name of the person receiving this.';
+  if (!phone) e.phone = 'Please enter a 10-digit phone number.';
+  else if (!/^\d{10}$/.test(phone)) e.phone = 'Phone number must be exactly 10 digits, without +91. For example: 9876543210.';
+  if (!(c.addr || '').trim()) e.addr = 'Please enter the flat or house number and street.';
+  if (!(c.city || '').trim()) e.city = 'Please enter the city.';
+  if (!pin) e.pin = 'Please enter a 6-digit PIN code.';
+  else if (!/^\d{6}$/.test(pin)) e.pin = 'PIN code must be exactly 6 digits. For example: 411045.';
+  return e;
+};
+
+// Shows or clears one field's error, in text and linked to its input
+const fieldErr = (el, t) => {
+  if (!el) return;
+  const id = 'e_' + el.id;
+  const old = document.getElementById(id);
+  old && old.remove();
+  const d = (el.getAttribute('aria-describedby') || '').split(' ').filter(x => x && x !== id);
+  el.classList.toggle('err', !!t);
+  if (t) {
+    el.setAttribute('aria-invalid', 'true');
+    d.push(id);
+    const p = document.createElement('p');
+    p.className = 'help e';
+    p.id = id;
+    p.innerHTML = ic('alert', 14) + ' ' + esc(t);
+    const help = el.nextElementSibling;
+    (help && help.classList.contains('help') ? help : el).after(p);
+  } else el.removeAttribute('aria-invalid');
+  d.length ? el.setAttribute('aria-describedby', d.join(' ')) : el.removeAttribute('aria-describedby');
+};
+
+// Applies { inputId: message } to a form; returns false and focuses the first problem
+const formErrs = (box, er) => {
+  const ids = Object.keys(er);
+  box && box.querySelectorAll('.in').forEach(x => fieldErr(x, er[x.id]));
+  const sum = box && box.querySelector('[data-errsum]');
+  if (sum) sum.innerHTML = ids.length ? `<div role="alert">${msg('warn', 'alert', 'Please fix ' + ids.length + (ids.length > 1 ? ' things' : ' thing') + ' below, then try again.')}</div>` : '';
+  if (ids.length) document.getElementById(ids[0]).focus();
+  return !ids.length;
+};
+
+const prefix = (er, pre) => Object.fromEntries(Object.entries(er).map(([k, v]) => [pre + k, v]));
+
+// Delivery field. live=true saves each keystroke so details survive going back
+const cf = (k, lbl, ex, attrs = '', live = true) =>
+  `<div><label for="c_${k}">${lbl}</label><input class="in" id="c_${k}" ${live ? `data-chk="${k}"` : ''} value="${esc(CHK[k] || '')}" required aria-describedby="ch_${k}" ${attrs}><p class="help" id="ch_${k}">${ex}</p></div>`;
+
+const chkFields = live =>
+  `<div class="fg">${cf('name', 'Full name', 'The person receiving the gift.', 'autocomplete="name"', live)}${cf(
+    'phone',
+    'Phone number',
+    'Exactly 10 digits, without +91.',
+    'type="tel" inputmode="numeric" autocomplete="tel-national"',
+    live
+  )}</div>${cf('addr', 'Street address', 'Flat or house number, building, street.', 'autocomplete="street-address"', live)}<div class="fg">${cf(
+    'city',
+    'City',
+    'For example: Pune.',
+    'autocomplete="address-level2"',
+    live
+  )}${cf('pin', 'PIN code', 'Exactly 6 digits.', 'inputmode="numeric" autocomplete="postal-code"', live)}</div>`;
+
+// --- Occasion Dates ---
+const isSample = x => /^[or][1-4]$/.test(x.id);
+const sampleTag = x => (isSample(x) ? '<span class="tag" style="margin-left:6px">Sample</span>' : '');
+
+const occNext = o => {
+  const now = new Date();
+  now.setHours(0, 0, 0, 0);
+  let d;
+  if (o.iso) {
+    const [y, m, dd] = o.iso.split('-').map(Number);
+    d = new Date(y, m - 1, dd);
+    if (d >= now) return d;
+    d.setFullYear(now.getFullYear());
+  } else {
+    const m = /(\d{1,2})\s+([a-z]{3})/i.exec(o.date || '');
+    const mi = m ? 'janfebmaraprmayjunjulaugsepoctnovdec'.indexOf(m[2].toLowerCase()) / 3 : -1;
+    if (!(mi >= 0) || mi % 1) return null;
+    d = new Date(now.getFullYear(), mi, +m[1]);
+  }
+  if (d < now) d.setFullYear(d.getFullYear() + 1);
+  return d;
+};
+
+const occDays = o => {
+  const d = occNext(o);
+  if (!d) return o.days || 0;
+  const now = new Date();
+  now.setHours(0, 0, 0, 0);
+  return Math.round((d - now) / 864e5);
+};
+const dayTxt = n => (n <= 0 ? 'Today' : n === 1 ? 'Tomorrow' : 'In ' + n + ' days');
+const occSorted = () => [...OCCASIONS].sort((a, b) => occDays(a) - occDays(b));
+const occIcon = o => (o.occ === 'birthday' ? 'birthday' : o.occ === 'anniv' || o.occ === 'wedding' ? 'rings' : o.occ === 'thanks' || o.occ === 'festival' ? 'bouquet' : 'bell');
+
+// --- Modal Helpers (native dialog: traps focus and closes on Escape) ---
+function openDlg(html) {
+  const dlg = $('#dlg');
+  dlg.innerHTML = html;
+  dlg.showModal();
+}
+
+function confirmDlg(title, body, okLabel, keepLabel, fn) {
+  confirmDlg.fn = fn;
+  openDlg(`<h2 id="dt">${title}</h2><p class="mut">${body}</p><div class="row" style="margin-top:24px;justify-content:flex-end;flex-wrap:wrap;gap:8px"><button class="btn sec sm" data-close autofocus>${keepLabel}</button><button class="btn danger sm" data-cfmok>${okLabel}</button></div>`);
+}
+
+// Plain quick-adds merge into an existing plain line; personalised gifts stay separate
+function addToCart(id, o) {
+  const p = PR.find(x => x.id === id);
+  if (!p) return;
+  if (!o) {
+    const same = CART.find(c => c.id === id && !c.pe && !c.wr && !c.gm);
+    if (same) same.qty = (same.qty || 1) + 1;
+    else CART.push({ id, qty: 1 });
+  } else {
+    const line = { id, qty: 1, pe: !!(o.pe && p.pe), nm: o.nm, ln: o.ln, wr: !!o.wr, ws: wsOf(o)[0] };
+    if (!o.gx && o.gm) Object.assign(line, { gs: gsOf(o)[0], gt: o.gt, gm: o.gm, gf: o.gf });
+    CART.push(line);
+  }
+  sp();
+  return p;
+}
+
+const itemTags = i =>
+  [
+    i.pe && `Personalized: “${esc(i.nm || '')}${i.ln ? ' · ' + esc(i.ln) : ''}”`,
+    i.wr && `Gift wrap: ${(WST.find(x => x[0] === i.ws) || WST[0])[1]}`,
+    i.gm && `Greeting card to ${esc(i.gt || '')}`
+  ]
+    .filter(Boolean)
+    .map((x, k) => `<span class="tag ${['b', 'l', 'c'][k]}">${x}</span>`)
+    .join(' ');
+
+function removeCartLine(idx) {
+  const item = CART[idx];
+  if (!item) return;
+  R.undo = { item, idx };
+  CART.splice(idx, 1);
+  sp();
+  rr('undobtn');
+}
+
+// --- Simulated Order Tracking (time since order; no courier integration) ---
+const STG = ['Order Placed', 'Order Confirmed', 'Gift Packed', 'Shipped', 'Out for Delivery', 'Delivered'];
+const SIM_TRACK = 'Simulated tracking status';
+const stgTimes = o => {
+  const span = Math.max(o.eta, 1) * 864e5;
+  return [0, 3e5, span * 0.25, span * 0.5, span * 0.85, span];
+};
+const ordElapsed = o => (o.cancelled || Date.now()) - o.at + (o.skew || 0);
+const ordStage = o => {
+  const e = ordElapsed(o);
+  return stgTimes(o).reduce((a, t, i) => (e >= t ? i : a), 0);
+};
+const ordDone = o => !o.cancelled && ordStage(o) === STG.length - 1;
+const canCancel = o => !o.cancelled && ordStage(o) < 3;
+const ordStatus = o => (o.cancelled ? 'Cancelled' : STG[ordStage(o)]);
+const ordTag = o =>
+  `<span class="tag ${o.cancelled ? 'b' : ordDone(o) ? 'g' : 'l'}">${ic(o.cancelled ? 'x' : ordDone(o) ? 'check' : 'truck', 14)} ${ordStatus(o)}</span>`;
+const ordEta = o => fdt(o.at + o.eta * 864e5);
+const simNote = () => `<div class="msg info">${ic('info')}<span><b>${SIM_TRACK}.</b> Status moves on with the time since the order. No courier is connected in this prototype.</span></div>`;
+const orderOf = () => ORDERS.find(x => x.id === location.hash.split('/')[1]);
+
+const timeline = o => {
+  const cur = ordStage(o);
+  const t = stgTimes(o);
+  const rows = STG.map((s, i) => {
+    if (o.cancelled && i > cur) return '';
+    const st = i < cur || ordDone(o) || o.cancelled ? 'done' : i === cur ? 'cur' : 'next';
+    const when = i <= cur ? fdt(Math.max(o.at, o.at + t[i] - (o.skew || 0))) : i === STG.length - 1 ? 'Estimated by ' + ordEta(o) : 'Upcoming';
+    return `<li class="tl-${st}" ${st === 'cur' ? 'aria-current="step"' : ''}><span class="tl-dot" aria-hidden="true">${st === 'next' ? '' : st === 'cur' ? '●' : '✓'}</span><div><b>${s}</b><span class="help" style="display:block;margin:0">${
+      st === 'cur' ? 'Current status · ' : st === 'done' ? 'Completed · ' : ''
+    }${when}</span></div></li>`;
+  }).join('');
+  return `<ol class="tl">${rows}${
+    o.cancelled ? `<li class="tl-can" aria-current="step"><span class="tl-dot" aria-hidden="true">✕</span><div><b>Cancelled</b><span class="help" style="display:block;margin:0">Current status · ${fdt(o.cancelled)}</span></div></li>` : ''
+  }</ol>`;
+};
+
+function placeOrder() {
+  const t = cartTotals();
+  if (!t.lines.length || Object.keys(vC(CHK)).length) {
+    location.hash = '#checkout';
+    return;
+  }
+  const at = Date.now();
+  const o = {
+    id: 'AAP-' + new Date(at).getFullYear() + '-' + String(at).slice(-6),
+    at,
+    skew: 0,
+    items: t.lines.map(l => ({ ...l.item, n: l.p.n, pe: l.pe, qty: l.qty, unit: l.unit })),
+    addr: { name: CHK.name.trim(), phone: CHK.phone.replace(/[\s-]/g, ''), addr: CHK.addr.trim(), city: CHK.city.trim(), pin: CHK.pin.trim() },
+    pay: CHK.pay,
+    sub: t.sub,
+    del: t.del,
+    tot: t.tot,
+    eta: t.eta,
+    support: []
+  };
+  ORDERS.unshift(o);
+  t.lines.forEach(l => delete PS[l.p.id]);
+  CART = [];
+  sp();
+  toast('Order placed.');
+  location.hash = '#order-success/' + o.id;
+}
+
 const R = { st: 'ok', fo: 0, cat: '', bud: '', del: 0, ints: null, pe: 0, hd: 0, lc: 0, su: 0, pv: 0, sort: 'match', search: '', occFilter: 'all' };
+const RECK = ['cat', 'del', 'ints', 'pe', 'hd', 'lc', 'su', 'bud', 'sort'];
+try {
+  Object.assign(R, JSON.parse(localStorage.getItem('aapo_recf') || '{}'));
+} catch (e) {}
+
+const svR = () => {
+  try {
+    localStorage.setItem('aapo_recf', JSON.stringify(Object.fromEntries(RECK.map(k => [k, R[k]]))));
+  } catch (e) {}
+};
+
+// Browse filters are separate from Gift Finder filters
+const B0 = { q: '', cat: '', sort: 'featured', bud: '', del: 0, pe: 0, hd: 0, lc: 0, su: 0 };
+let B = { ...B0 };
+try {
+  Object.assign(B, JSON.parse(localStorage.getItem('aapo_browse') || '{}'));
+} catch (e) {}
+
+const svB = () => {
+  try {
+    localStorage.setItem('aapo_browse', JSON.stringify(B));
+  } catch (e) {}
+};
+
 const CATS = [
   ['selfcare', 'Self-care'],
   ['food', 'Food & sweets'],
@@ -555,7 +820,7 @@ const BR = { u500: [0, 500], b1: [500, 1000], b2: [1000, 2000], b3: [2000, 5000]
 const rng = k => (k === 'custom' ? [0, +F.cust || 0] : BR[k] || [0, 1e9]);
 const bk = () => R.bud || F.bud;
 const inr = n => '₹' + Number(n).toLocaleString('en-IN');
-const WS = { mother: 'Mom', father: 'Dad' };
+const WS = { mother: 'Mom', father: 'Dad', wother: 'someone special' };
 
 const whoS = () => (S.lang === 'en' ? WS[F.who] || lab('who') || 'Someone special' : lab('who') || 'विशेष व्यक्ती');
 const il = id => LB(id, (OPT.int.find(o => o[0] === id) || [0, id])[1]);
@@ -571,6 +836,8 @@ const dt = d =>
     month: 'short'
   });
 
+const fdt = ms => new Date(ms).toLocaleDateString('en-IN', { weekday: 'short', day: 'numeric', month: 'short' });
+
 const ready = () => F.who && F.occ && F.bud && F.int.length && (F.bud !== 'custom' || +F.cust > 0);
 const fit = p => {
   const i = p.i.filter(x => F.int.includes(x));
@@ -579,13 +846,22 @@ const fit = p => {
   return { i, o, w, sc: i.length * 3 + (o ? 2 : 0) + (w ? 2 : 0) };
 };
 
+const whoP = () => {
+  if (S.lang !== 'en') return whoS() + '’s';
+  return { mother: 'Mom’s', father: 'Dad’s', wother: 'their' }[F.who] || 'your ' + lab('who').toLowerCase() + '’s';
+};
+
+// Explains a pick using only the answers it actually matches
 const why = p => {
   const f = fit(p);
-  return (
-    (f.i.length ? `Fits ${whoS()}’s love of ${f.i.map(il).join(' and ').toLowerCase()}` : 'A thoughtful all-rounder') +
-    (f.o ? ', and suits this occasion' : '') +
-    '.'
-  );
+  const hi = rng(bk())[1];
+  const a = [];
+  if (f.i.length) a.push(`Matches ${whoP()} love of ${f.i.map(il).join(' and ').toLowerCase()}`);
+  else if (R.ints) a.push('Matches the interests you filtered by');
+  if (f.w && F.who !== 'wother') a.push(`Good for ${S.lang === 'en' ? WS[F.who] || 'your ' + lab('who').toLowerCase() : whoS()}`);
+  if (f.o && F.occ !== 'oother') a.push(`Suits ${lab('occ')}`);
+  if (p.p <= hi) a.push(`Within your ${bl(bk())} budget`);
+  return a.join(' · ') + '.';
 };
 
 const rate = p =>
@@ -597,28 +873,70 @@ const badges = p =>
     .map((t, k) => `<span class="tag ${k ? 'l' : ''}">${t}</span>`)
     .join('');
 
-const RL = () => {
-  const [lo, hi] = rng(bk());
-  const it = R.ints || (F.int.length ? F.int : OPT.int.map(o => o[0]));
+const RL = (x = {}) => {
+  const r = { ...R, ...x };
+  const [lo, hi] = x.hi !== undefined ? [0, x.hi] : rng(r.bud || F.bud);
+  const all = OPT.int.map(o => o[0]);
+  const it = x.anyInt ? all : r.ints || (F.int.length ? F.int : all);
   return PR.filter(
     p =>
       p.p >= lo &&
       p.p <= hi &&
-      (!R.cat || p.c === R.cat) &&
-      (!R.del || p.d <= R.del) &&
-      p.i.some(x => it.includes(x)) &&
-      (!R.pe || p.pe) &&
-      (!R.hd || p.h) &&
-      (!R.lc || p.l) &&
-      (!R.su || p.s)
+      (!r.cat || p.c === r.cat) &&
+      (!r.del || p.d <= r.del) &&
+      p.i.some(k => it.includes(k)) &&
+      (!r.pe || p.pe) &&
+      (!r.hd || p.h) &&
+      (!r.lc || p.l) &&
+      (!r.su || p.s)
   )
     .map(p => ({ p, f: fit(p) }))
     .sort((a, b) => {
-      if (R.sort === 'price-low') return a.p.p - b.p.p;
-      if (R.sort === 'price-high') return b.p.p - a.p.p;
-      if (R.sort === 'rating') return b.p.r - a.p.r;
+      if (r.sort === 'price-low') return a.p.p - b.p.p;
+      if (r.sort === 'price-high') return b.p.p - a.p.p;
+      if (r.sort === 'popular') return b.p.rv - a.p.rv;
       return b.f.sc - a.f.sc || b.p.r - a.p.r;
     });
+};
+
+// When nothing matches: closest gifts from relaxing one preference at a time
+const closest = () => {
+  const hi = rng(bk())[1];
+  const seen = new Set();
+  const out = [];
+  const add = (title, note, act, items) => {
+    const a = items.filter(x => !seen.has(x.p.id)).slice(0, 3);
+    if (!a.length) return;
+    a.forEach(x => seen.add(x.p.id));
+    out.push({ title, note, act, a });
+  };
+  const rm = (k, t, clear) => add(`Without the “${t}” filter`, () => `Fits your other answers, but not the “${t}” filter.`, `<button class="btn sec sm" data-rrm="${k}">Remove this filter</button>`, RL(clear));
+  if (R.cat) rm('cat', (CATS.find(c => c[0] === R.cat) || [0, R.cat])[1], { cat: '' });
+  if (R.del) rm('del', 'Arrives by ' + dt(R.del), { del: 0 });
+  if (R.ints) rm('ints', 'Interests', { ints: null });
+  TYPES.filter(t => R[t[0]]).forEach(t => rm(t[0], t[1], { [t[0]]: 0 }));
+  const over = RL({ hi: 1e9, sort: 'price-low' }).filter(x => x.p.p > hi);
+  const band = over.length && Object.keys(BR).find(k => BR[k][0] <= over[0].p.p && BR[k][1] >= over[0].p.p);
+  add(
+    'A little over your budget',
+    p => `${inr(p.p - hi)} over your ${bl(bk())} budget. Matches what they enjoy.`,
+    band ? `<button class="btn sec sm" data-rband="${band}">Change budget to ${bl(band)}</button>` : '',
+    over
+  );
+  add(
+    'Within your budget, with different interests',
+    p => `Not one of the interests you chose${fit(p).o && F.occ !== 'oother' ? `, but it suits ${lab('occ')}` : ''}.`,
+    `<a class="btn sec sm" href="#finder/interests">Change interests</a>`,
+    RL({ anyInt: 1 })
+  );
+  if (!out.length)
+    add(
+      'Popular gifts to consider',
+      () => 'Doesn’t match all your answers, but people often choose it.',
+      `<a class="btn sec sm" href="#finder">${tr('ed', 'Edit your choices')}</a>`,
+      [...PR].sort((a, b) => b.rv - a.rv).map(p => ({ p, f: fit(p) }))
+    );
+  return out;
 };
 
 const nAct = () => [R.cat, R.del, R.ints, R.pe, R.hd, R.lc, R.su].filter(Boolean).length;
@@ -629,17 +947,24 @@ const say = t => {
   setTimeout(() => (e.textContent = t), 60);
 };
 
+// Re-render in place, keeping scroll and keyboard focus
 const rr = id => {
   const y = scrollY;
+  const a = document.activeElement;
+  const fid = id || (a && a.id);
+  const inApp = a && $('#app').contains(a);
   render(true);
   scrollTo(0, y);
-  if (id) {
-    const el = document.getElementById(id);
-    el && el.focus();
-  }
+  const el = fid && document.getElementById(fid);
+  if (el) el.focus({ preventScroll: true });
+  else if (inApp) $('#app').focus({ preventScroll: true });
 };
 
-const cnt = () => say(Math.min(RL().length, S.simple ? 3 : 6) + ' gifts shown.');
+const recCap = () => (S.simple ? 3 : 8);
+const cnt = () => {
+  svR();
+  say(Math.min(RL().length, recCap()) + ' gifts shown.');
+};
 
 function loadR() {
   R.st = 'loading';
@@ -654,33 +979,112 @@ function loadR() {
   }, 900);
 }
 
-const card = (p, k) => {
+// --- Shared Product Card Parts ---
+const ALT = {
+  journal: 'Stitched handmade-paper journal with a soft cover',
+  planter: 'Hand-painted terracotta planter with a saucer',
+  diya: 'Engraved brass diya, lit',
+  candle: 'Lavender soy candles and a jar of bath salts in a gift set',
+  hamper: 'Ayurvedic self-care hamper in a jute-lined box',
+  mithai: 'Open gift box of festive sweets, almonds and cashews'
+};
+const PHOTO_PH = ['seedkit', 'spa', 'stole', 'kansa', 'warli'];
+const pAlt = p => (PHOTO_PH.includes(p.id) ? 'Placeholder photo for ' + p.n : ALT[p.id] || p.n);
+const phTag = p => (PHOTO_PH.includes(p.id) ? '<span class="tag phd">Placeholder photo</span>' : '');
+
+const thumb = p => {
   const sv = SV.includes(p.id);
+  return `<div class="th" style="background:var(--${p.bg})"><img src="${IMAGES[p.id] || 'images/candle.jpg'}" alt="${pAlt(p)}" class="p-img" loading="lazy" onerror="this.style.display='none'">${phTag(p)}${
+    sv ? `<span class="tag svd">${ic('check', 14)} Saved</span>` : ''
+  }<button class="iconbtn save" id="sv_${p.id}" data-sv="${p.id}" aria-pressed="${sv}" aria-label="${sv ? 'Remove ' + p.n + ' from saved gifts' : 'Save ' + p.n}">${ic('heart', 20)}</button></div>`;
+};
+
+const ctaRow = p =>
+  `<div class="cta-row"><a class="btn sec sm" href="#product/${p.id}" aria-label="View details: ${p.n}">View Details</a><button class="btn sm" id="ac_${p.id}" data-addcart="${p.id}" aria-label="Add ${p.n} to cart">${ic('bag', 18)} ${tr('atc', 'Add to Cart')}</button></div>`;
+
+const pcard = (p, extra = '') =>
+  `<li><article class="card prod rc" aria-labelledby="t_${p.id}">${thumb(p)}<div class="bd"><div class="chips" style="margin-bottom:8px">${badges(p)}</div><h3 id="t_${p.id}">${p.n}</h3><div class="row" style="justify-content:space-between;flex-wrap:wrap;gap:8px;margin-bottom:8px"><span class="price">${inr(
+    p.p
+  )}</span>${rate(p)}</div>${extra}<p class="help" style="margin:0 0 12px;color:var(--ink);font-weight:600">${ic('truck', 16)} Arrives by ${dt(p.d)}</p>${ctaRow(p)}</div></article></li>`;
+
+const card = (p, k, note) => {
   const f = fit(p);
-  const imgSrc = IMAGES[p.id] || 'images/candle.jpg';
-  return `<li><article class="card prod rc" aria-labelledby="t_${p.id}"><div class="th" style="background:var(--${p.bg})"><img src="${imgSrc}" alt="${p.n}" class="p-img" loading="lazy" onerror="this.style.display='none'">${sv ? `<span class="tag svd">${ic('check', 14)} Saved</span>` : ''}<button class="iconbtn save" id="sv_${p.id}" data-sv="${p.id}" aria-pressed="${sv}" aria-label="${
-    sv ? 'Remove ' + p.n + ' from saved gifts' : 'Save ' + p.n
-  }">${ic('heart', 20)}</button></div><div class="bd"><p class="eyebrow" style="margin:0 0 4px">${ic(k === 0 ? 'star' : f.sc >= 6 ? 'check' : 'info', 14)} ${
-    k === 0 ? 'Top pick' : f.sc >= 6 ? 'Strong match' : 'Good match'
+  return `<li><article class="card prod rc" aria-labelledby="t_${p.id}">${thumb(p)}<div class="bd"><p class="eyebrow" style="margin:0 0 4px">${ic(note ? 'info' : k === 0 ? 'star' : f.sc >= 6 ? 'check' : 'info', 14)} ${
+    note ? 'Closest match' : k === 0 ? 'Top pick' : f.sc >= 6 ? 'Strong match' : 'Good match'
   }</p><div class="chips" style="margin-bottom:8px">${badges(p)}</div><h3 id="t_${p.id}">${p.n}</h3><div class="row" style="justify-content:space-between;flex-wrap:wrap;gap:8px"><span class="price">${inr(
     p.p
-  )}</span>${rate(p)}</div><p class="why"><b>Why we picked this:</b> ${why(p)}</p><ul class="ml" style="margin-bottom:16px"><li>${ic('pen', 16)} ${
+  )}</span>${rate(p)}</div><p class="why">${note ? `<b>How it differs:</b> ${note}` : `<b>Why this matches:</b> ${why(p)}`}</p><ul class="ml" style="margin-bottom:16px"><li>${ic('pen', 16)} ${
     p.pe ? 'Personalizable: ' + p.pe : 'Message card only'
-  }</li><li>${ic('truck', 16)} Arrives by ${dt(p.d)}</li>${p.st <= 5 ? `<li>${ic('alert', 16)} Only ${p.st} left</li>` : ''}</ul><div class="row" style="gap:8px;margin-top:auto"><a class="btn sm" href="#product/${p.id}" style="flex:1" aria-label="View Gift: ${p.n}">${tr(
-    'vg',
-    'View Gift'
-  )} ${ic('arrow', 18)}</a><button class="btn ghost sm" data-addcart="${p.id}" title="Quick add to cart">${ic('bag', 18)}</button></div></div></article></li>`;
+  }</li><li>${ic('truck', 16)} Arrives by ${dt(p.d)}</li>${p.st <= 5 ? `<li>${ic('alert', 16)} Only ${p.st} left</li>` : ''}</ul>${ctaRow(p)}</div></article></li>`;
+};
+
+// --- Browse: search, filters, sorting ---
+const TYPES = [
+  ['pe', 'Personalizable'],
+  ['hd', 'Handmade'],
+  ['lc', 'Local'],
+  ['su', 'Sustainable']
+];
+const SORTS = [
+  ['price-low', 'Price: Low to High'],
+  ['price-high', 'Price: High to Low'],
+  ['popular', 'Popularity']
+];
+const budOpts = OPT.bud.filter(o => o[0] !== 'custom');
+
+const bList = () => {
+  const q = B.q.trim().toLowerCase();
+  const [lo, hi] = BR[B.bud] || [0, 1e9];
+  const a = PR.filter(
+    p =>
+      (!q || (p.n + ' ' + p.ds).toLowerCase().includes(q)) &&
+      (!B.cat || p.c === B.cat) &&
+      p.p >= lo &&
+      p.p <= hi &&
+      (!B.del || p.d <= B.del) &&
+      (!B.pe || p.pe) &&
+      (!B.hd || p.h) &&
+      (!B.lc || p.l) &&
+      (!B.su || p.s)
+  );
+  if (B.sort === 'price-low') a.sort((x, y) => x.p - y.p);
+  if (B.sort === 'price-high') a.sort((x, y) => y.p - x.p);
+  if (B.sort === 'popular') a.sort((x, y) => y.rv - x.rv);
+  return a;
+};
+
+const bActive = () =>
+  [
+    B.q.trim() && ['q', 'Search: “' + esc(B.q.trim()) + '”'],
+    B.cat && ['cat', (CATS.find(c => c[0] === B.cat) || [0, B.cat])[1]],
+    B.bud && ['bud', LB(B.bud, (budOpts.find(o => o[0] === B.bud) || [0, ''])[1])],
+    B.del && ['del', 'Arrives by ' + dt(B.del)],
+    ...TYPES.filter(t => B[t[0]])
+  ].filter(Boolean);
+
+const rmChips = (a, attr, clear) =>
+  a.length
+    ? `<div class="chips" role="group" aria-label="Active filters" style="align-items:center;margin-bottom:16px"><span class="help" style="margin:0;font-weight:700;color:var(--ink)">Active filters:</span>${a
+        .map(x => `<button class="fc fx" id="${attr}_${x[0]}" data-${attr}="${x[0]}" aria-label="Remove filter: ${x[1]}">${x[1]}</button>`)
+        .join('')}<button class="btn sec sm" ${clear}>Clear All</button></div>`
+    : '';
+
+const browseBody = () => {
+  const a = bList();
+  const act = bActive();
+  return `${rmChips(act, 'brm', 'data-bclear')}<p class="mut" role="status">Showing ${a.length} of ${PR.length} gifts</p>${
+    a.length
+      ? `<ul class="rl">${a.map(p => pcard(p, `<p class="mut" style="font-size:14px;margin-bottom:8px">${p.ds.slice(0, 75)}…</p>`)).join('')}</ul>`
+      : `<div class="empty-state"><div class="tile">${ic('search', 32)}</div><h2>No gifts found</h2><p class="mut">${
+          B.q.trim() ? 'Nothing matches “' + esc(B.q.trim()) + '” with these filters. ' : 'Nothing matches these filters. '
+        }Try a different search, or change or clear your filters.</p><button class="btn" data-bclear>${ic('retry', 18)} Clear Filters</button></div>`
+  }`;
 };
 
 const fpanel = () => {
   const bo = OPT.bud.filter(o => o[0] !== 'custom').map(o => o[0]).concat(F.bud === 'custom' ? ['custom'] : []);
   const it = R.ints || (F.int.length ? F.int : OPT.int.map(o => o[0]));
-  const tg = [
-    ['pe', 'Personalizable'],
-    ['hd', 'Handmade'],
-    ['lc', 'Local'],
-    ['su', 'Sustainable']
-  ];
+  const tg = TYPES;
   return `<div class="card fp" id="fpanel" ${R.fo ? '' : 'hidden'}><div class="fg"><div><label for="fcat">Category</label><select class="in" id="fcat"><option value="">All categories</option>${CATS.map(
     c => `<option value="${c[0]}" ${R.cat === c[0] ? 'selected' : ''}>${c[1]}</option>`
   ).join('')}</select></div><div><label for="fbud">Budget</label><select class="in" id="fbud" aria-describedby="fbh">${bo
@@ -752,7 +1156,7 @@ const wn = (k, v) =>
     ? ic('info', 14) + ' Almost full.'
     : '';
 
-const cn = (k, v) => `${v.length} of ${LM[k]} characters`;
+const cn = (k, v) => `${v.length}/${LM[k]} characters`;
 
 const vP = (p, o) => {
   const e = {};
@@ -782,7 +1186,7 @@ const pc = (p, o) => {
   const pe = !!(o.pe && p.pe);
   const wx = o.wr ? WR : 0;
   const ex = pe ? PE : 0;
-  const df = p.p >= 999 ? 0 : 60;
+  const df = p.p >= FREE_AT ? 0 : DEL_FEE;
   return { pe, wr: !!o.wr, ex, wx, df, dl: p.d + (pe ? 1 : 0), tot: p.p + ex + wx + df };
 };
 
@@ -820,6 +1224,17 @@ const sumry = (p, o) => {
   return `<dl class="sy" aria-live="polite">${r.map(x => `<div><dt>${x[0]}</dt><dd>${x[1]}</dd></div>`).join('')}<div class="tot"><dt>Total</dt><dd>${inr(c.tot)}</dd></div></dl>`;
 };
 
+const selRows = (p, o) => {
+  const c = pc(p, o);
+  const row = (on, l, v) => `<li>${ic(on ? 'check' : 'x', 16)} <span><b>${l}:</b> ${v}</span></li>`;
+  return (
+    row(c.pe, 'Personalization', c.pe ? (o.nm ? esc(o.nm) + (o.ln ? ' · ' + esc(o.ln) : '') : 'On, text still needed') : p.pe ? 'Not selected' : 'Not available for this gift') +
+    row(c.wr, 'Gift wrapping', c.wr ? wsOf(o)[1] : 'Not selected') +
+    row(!o.gx, 'Greeting card', o.gx ? 'Not included' : gsOf(o)[1] + (o.gm ? ', message written' : ', message still needed'))
+  );
+};
+const selsum = (p, o) => `<div class="card" style="margin-bottom:16px"><h2 style="font-size:20px">Your selections</h2><ul class="ml" id="selsum" style="margin-bottom:0;overflow-wrap:anywhere">${selRows(p, o)}</ul></div>`;
+
 const prog = n => progress(['Personalize', 'Greeting card', 'Preview'], n);
 const errb = er => {
   const k = Object.keys(er);
@@ -853,13 +1268,15 @@ function sayMsg() {
   const fin = () => {
     st.innerHTML = msg('ok', 'check', 'Finished. Tap Listen to hear it again.');
   };
-  st.innerHTML = `<div class="msg info">${ic('mic')}<span class="pulse"></span><span><b>Listening…</b> Reading your card aloud.</span><button class="btn sec sm" data-saystop>Stop</button></div>`;
+  st.innerHTML = `<div class="msg info">${ic('mic')}<span class="pulse"></span><span><b>Reading your card aloud…</b></span><button class="btn sec sm" data-saystop>Stop</button></div>`;
   if ('speechSynthesis' in window && window.SpeechSynthesisUtterance) {
     speechSynthesis.cancel();
     const u = new SpeechSynthesisUtterance(t);
     u.lang = { mr: 'mr-IN', hi: 'hi-IN' }[S.lang] || 'en-IN';
     u.onend = fin;
-    u.onerror = () => {};
+    u.onerror = () => {
+      st.innerHTML = msg('warn', 'alert', 'Your device couldn’t read this aloud.');
+    };
     speechSynthesis.speak(u);
   } else {
     sayMsg.t = setTimeout(fin, 2500);
@@ -885,10 +1302,51 @@ const V = {
     'Tell us who, when and how much. We do the rest.'
   )}</p><div class="row" style="flex-wrap:wrap">${btn(
     tr('cta', 'Find My Perfect Gift') + ' ' + ic('arrow', 20),
-    '#finder'
+    '#finder',
+    'lg'
   )}${btn(tr('browse', 'Browse Gifts'), '#browse', 'sec')}</div></div>
 <div class="art deco" role="img" aria-label="${CL}">${crowd()}</div></section>
 ${S.simple ? steps3() : ''}
+<section class="sec rich" style="margin-top:32px"><div class="row" style="justify-content:space-between;flex-wrap:wrap"><div><h2>${tr(
+    's2',
+    'Upcoming occasions'
+  )}</h2><p class="mut">Dates you’ve saved, soonest first.</p></div>${btn('See all occasions', '#occasions', 'sec sm')}</div>
+${
+  OCCASIONS.length
+    ? `<div class="grid">${occSorted()
+        .slice(0, 3)
+        .map(
+          o => `<div class="card row" style="justify-content:space-between;align-items:center;flex-wrap:wrap"><div class="row" style="gap:12px;align-items:center"><div class="tile" style="margin:0;width:40px;height:40px">${ic(occIcon(o), 24)}</div><div><div class="date" style="display:inline-block;margin-bottom:2px">${esc(o.date)}</div>${sampleTag(o)}<h3 style="margin:0">${esc(o.name)}</h3><span class="mut">${esc(o.person)} · ${dayTxt(occDays(o))}</span></div></div><a class="btn ghost sm" href="#finder" data-pickocc="${o.id}" aria-label="Find a gift for ${esc(o.name)}">Find gift</a></div>`
+        )
+        .join('')}</div>`
+    : `<div class="empty-state"><div class="tile">${ic('cal', 32)}</div><h3>No upcoming occasions</h3><p class="mut">Add a birthday or anniversary and it will show up here.</p><button class="btn" data-modal="add-occasion">${ic('plus', 20)} Add an Occasion</button></div>`
+}</section>
+<section class="sec rich"><h2>${tr('qb', 'Quick budget')}</h2><p class="mut">Tap a budget to start the Gift Finder with it selected.</p><div class="chips">${OPT.bud
+    .slice(0, 4)
+    .map(b => `<a class="sumc" href="#finder" data-qbud="${b[0]}">${LB(b[0], b[1])}</a>`)
+    .join('')}</div></section>
+<section class="sec rich"><h2>${tr('s3', 'Personalised picks')}</h2><p class="mut">A few favourites from our makers to start with.</p><ul class="rl">${['candle', 'stole', 'diya']
+    .map(id => pcard(PR.find(p => p.id === id)))
+    .join('')}</ul></section>
+<section class="sec rich"><h2>${tr('pc', 'Popular categories')}</h2><div class="grid cats">${[
+    ['heart', 'Self-care', 'selfcare'],
+    ['cup', 'Food & sweets', 'food'],
+    ['book', 'Books', 'books'],
+    ['home', 'Home & décor', 'home'],
+    ['leaf', 'Plants', 'plants'],
+    ['art', 'Handmade', 'hd']
+  ]
+    .map(c => `<a class="cat" href="#browse?${c[2] === 'hd' ? 'hd=1' : 'cat=' + c[2]}">${ic(c[0])}<span>${c[1]}</span></a>`)
+    .join('')}</div></section>
+${SV.length ? `<section class="sec rich"><div class="row" style="justify-content:space-between;flex-wrap:wrap"><h2>${tr(
+    'rs',
+    'Recently saved'
+  )}</h2>${btn('See all saved', '#saved', 'sec sm')}</div><div class="grid">${SV.slice(0, 3)
+    .map(id => {
+      const p = PR.find(x => x.id === id) || PR[0];
+      return `<a class="card row" href="#product/${p.id}" style="text-decoration:none;gap:16px"><img src="${IMAGES[p.id] || 'images/candle.jpg'}" alt="${p.n}" style="width:56px;height:56px;border-radius:14px;object-fit:cover;flex-shrink:0"><div><h3 style="margin:0;font-size:16px">${p.n}</h3><span class="mut">${inr(p.p)} · Saved</span></div></a>`;
+    })
+    .join('')}</div></section>` : ''}
 <section class="sec" aria-labelledby="vs"><div class="card"><div class="row" style="flex-wrap:wrap"><div style="flex:1;min-width:220px"><h2 id="vs" style="font-size:22px">${tr(
     'vs',
     'Voice search'
@@ -896,50 +1354,6 @@ ${S.simple ? steps3() : ''}
     'mic',
     20
   )} ${tr('vsb', 'Search by voice')}</button></div><div id="vhome" aria-live="polite" style="margin-top:8px"></div></div></section>
-<section class="sec rich"><h2>${tr('qb', 'Quick budget')}</h2><p class="mut">Tap a budget to start the Gift Finder with it selected.</p><div class="chips">${OPT.bud
-    .slice(0, 4)
-    .map(b => `<a class="sumc" href="#finder" data-qbud="${b[0]}">${LB(b[0], b[1])}</a>`)
-    .join('')}</div></section>
-<section class="sec rich"><div class="row" style="justify-content:space-between;flex-wrap:wrap"><div><h2>${tr(
-    's2',
-    'Upcoming occasions'
-  )}</h2><p class="mut">Upcoming moments with gentle reminders before the date.</p></div>${btn('See all occasions', '#occasions', 'sec sm')}</div>
-<div class="grid">${OCCASIONS.slice(0, 3)
-    .map(
-      o => {
-        const occIcon = o.occ === 'birthday' ? 'birthday' : o.occ === 'anniv' || o.occ === 'wedding' ? 'rings' : o.occ === 'thanks' || o.occ === 'festival' ? 'bouquet' : 'bell';
-        return `<div class="card row" style="justify-content:space-between;align-items:center"><div class="row" style="gap:12px;align-items:center"><div class="tile" style="margin:0;width:40px;height:40px">${ic(occIcon, 24)}</div><div><div class="date" style="display:inline-block;margin-bottom:2px">${o.date}</div><h3 style="margin:0">${o.name}</h3><span class="mut">${o.person} · in ${o.days} days</span></div></div><a class="btn ghost sm" href="#finder" data-pickocc="${o.id}">Find gift</a></div>`;
-      }
-    )
-    .join('')}</div></section>
-<section class="sec rich"><h2>${tr('s3', 'Personalised picks')}</h2><p class="mut">Gifts matched to the people and occasions you cherish.</p><div class="grid">
-${prod('Hand-poured soy candle set', ['Local artisan', 'Personalise'], '₹1,190', 'sun', 'peach', 'candle')}${prod(
-    'Handloom stole, silk blend',
-    ['Handloom', 'Festive'],
-    '₹1,799',
-    'heart',
-    'peach',
-    'stole'
-  )}${prod('Name-engraved brass diya', ['Personalise', 'Eco-friendly'], '₹649', 'sun', 'blush', 'diya')}</div></section>
-<section class="sec rich"><h2>${tr('pc', 'Popular categories')}</h2><div class="grid cats">${[
-    ['heart', 'Self-care', 'selfcare'],
-    ['cup', 'Food & sweets', 'food'],
-    ['book', 'Books', 'books'],
-    ['home', 'Home & décor', 'home'],
-    ['leaf', 'Plants', 'plants'],
-    ['art', 'Handmade', 'art']
-  ]
-    .map(c => `<a class="cat" href="#browse?cat=${c[2]}">${ic(c[0])}<span>${c[1]}</span></a>`)
-    .join('')}</div></section>
-<section class="sec rich"><div class="row" style="justify-content:space-between;flex-wrap:wrap"><h2>${tr(
-    'rs',
-    'Recently saved and viewed'
-  )}</h2>${btn('See all saved', '#saved', 'sec sm')}</div><div class="grid">${(SV.length ? SV.slice(0, 3) : ['diya', 'candle', 'planter'])
-    .map(id => {
-      const p = PR.find(x => x.id === id) || PR[0];
-      return `<a class="card row" href="#product/${p.id}" style="text-decoration:none;gap:16px"><img src="${IMAGES[p.id] || 'images/candle.jpg'}" alt="${p.n}" style="width:56px;height:56px;border-radius:14px;object-fit:cover;flex-shrink:0"><div><h3 style="margin:0;font-size:16px">${p.n}</h3><span class="mut">${inr(p.p)} · Saved</span></div></a>`;
-    })
-    .join('')}</div></section>
 <section class="sec rich"><div class="card feat"><div class="row" style="flex-wrap:wrap"><div class="tile" style="background:var(--card);margin:0">${ic(
     'cal'
   )}</div><div style="flex:1;min-width:200px"><h2 style="font-size:22px;margin:0">${tr(
@@ -1012,13 +1426,15 @@ ${prod('Hand-poured soy candle set', ['Local artisan', 'Personalise'], '₹1,190
             'Your budget (₹)'
           )}</label><input class="in" id="cin" type="number" inputmode="numeric" min="1" step="1" value="${F.cust || ''}" aria-describedby="cinh"><p class="help" id="cinh">Enter an amount in rupees, for example 1500.</p></div>`
         : ''
-    }<div class="row" style="margin-top:32px;flex-wrap:wrap;justify-content:space-between"><a class="btn sec" href="${BK[n]}">${tr(
+    }<div class="row" style="margin-top:32px;flex-wrap:wrap;justify-content:space-between"><a class="btn sec" href="${BK[n]}">‹ ${tr(
       'back',
       'Back'
-    )}</a><button class="btn" data-next="${ST[n][0]}">${n === 3 ? tr('show', 'Show my gifts') : tr('cont', 'Continue')} ${ic(
+    )}</a><div class="row" style="flex-wrap:wrap;gap:8px">${
+      ready() && n < 3 ? `<button class="btn ghost" data-next="${ST[n][0]}" data-jump>${tr('show', 'Show my gifts')}</button>` : ''
+    }<button class="btn" data-next="${ST[n][0]}">${n === 3 ? tr('show', 'Show my gifts') : tr('cont', 'Continue')} ${ic(
       'arrow',
       20
-    )}</button></div></section></div>`;
+    )}</button></div></div></section></div>`;
   },
 
   recommendations: () => {
@@ -1034,7 +1450,7 @@ ${prod('Hand-poured soy candle set', ['Local artisan', 'Personalise'], '₹1,190
       )}</div></section></div>`;
 
     const all = RL();
-    const cap = S.simple ? 3 : 8;
+    const cap = recCap();
     const sh = all.slice(0, cap);
     const na = nAct() + (R.bud ? 1 : 0);
     const sum = [S.lang === 'en' ? 'For ' + whoS() : whoS(), lab('occ'), lab('bud'), F.int.map(il).join(', ')].join(' • ');
@@ -1049,14 +1465,20 @@ ${prod('Hand-poured soy candle set', ['Local artisan', 'Personalise'], '₹1,190
             18
           )} Try again</button>`
         : !all.length
-        ? `<div class="card" role="status"><div class="tile">${ic('alert')}</div><h2 style="font-size:22px">No gifts match yet</h2><p>Nothing fits all your filters within ${bl(
+        ? `<div class="card" role="status"><div class="tile">${ic('alert')}</div><h2 style="font-size:22px">No exact matches yet</h2><p>Nothing fits all your answers within ${bl(
             bk()
-          )}. Your budget stays fixed unless you change it yourself.</p><div class="row" style="flex-wrap:wrap">${
+          )}. Your budget stays fixed unless you change it yourself. Here are the closest gifts, each changing just one thing.</p><div class="row" style="flex-wrap:wrap">${
             nAct() ? '<button class="btn" data-fclear>Clear filters</button>' : ''
           }<button class="btn sec" data-ebud>Edit budget</button><a class="btn sec" href="#finder">${tr(
             'ed',
             'Edit your choices'
-          )}</a></div></div>`
+          )}</a></div></div>${closest()
+            .map(
+              g => `<section style="margin-top:24px" aria-label="${esc(g.title)}"><div class="row" style="justify-content:space-between;flex-wrap:wrap;margin-bottom:12px"><h2 style="font-size:20px;margin:0">${esc(g.title)}</h2>${g.act}</div><ul class="rl">${g.a
+                .map(x => card(x.p, 1, g.note(x.p)))
+                .join('')}</ul></section>`
+            )
+            .join('')}`
         : `<p class="mut" role="status">Showing ${sh.length} of ${all.length} gifts that fit. We show only your best matches, strongest first.</p><ul class="rl">${sh
             .map((x, k) => card(x.p, k))
             .join('')}</ul>`;
@@ -1065,6 +1487,17 @@ ${prod('Hand-poured soy candle set', ['Local artisan', 'Personalise'], '₹1,190
       tr('pl', 'Who|Occasion|Budget|Interests').split('|').concat('Picks'),
       4
     )}<h1 id="rh" tabindex="-1" style="font-size:32px">${tr('rt', 'Gifts picked for them ♡')}</h1><p class="lead" id="rsum">${sum}</p>
+<div class="chips" role="group" aria-label="${tr('ch', 'Your choices')}" style="margin-bottom:16px">${[
+      ['who', 'who', '#finder'],
+      ['occ', 'occasion', '#finder/occasion'],
+      ['bud', 'budget', '#finder/budget'],
+      ['int', 'interests', '#finder/interests']
+    ]
+      .map(x => {
+        const v = x[0] === 'int' ? F.int.map(il).join(', ') : lab(x[0]);
+        return `<a class="sumc" href="${x[2]}" aria-label="Change ${x[1]}: ${v}">${ic('pen', 16)} ${v}</a>`;
+      })
+      .join('')}</div>
 <div class="row" style="flex-wrap:wrap;margin-bottom:16px"><a class="btn sec sm" href="#finder">${ic('retry', 18)} ${tr(
       'ed',
       'Edit your choices'
@@ -1073,13 +1506,24 @@ ${prod('Hand-poured soy candle set', ['Local artisan', 'Personalise'], '₹1,190
     }</button><a class="sumc" href="#saved">${ic('heart', 16)} Saved gifts: ${SV.length}</a><a class="sumc" href="#cart">${ic(
       'bag',
       16
-    )} Cart (${CART.length})</a></div>
+    )} Cart (${cartTotals().count})</a></div>
 ${
   R.bud && R.bud !== F.bud
     ? `<div role="status">${msg('warn', 'alert', 'You changed your budget to ' + bl(R.bud) + '. Your original budget was ' + lab('bud') + '.')}</div><button class="btn sec sm" data-rrestore>Restore my budget</button>`
-    : `<p class="help">${ic('info', 14)} Your budget of ${lab('bud')} is a firm limit. We never show gifts outside it.</p>`
+    : `<p class="help">${ic('info', 14)} Your budget of ${lab('bud')} is a firm limit. Your picks never go over it. If nothing fits, we may suggest clearly labelled alternatives.</p>`
 }
-${fpanel()}<div style="margin-top:16px">${rb}</div>
+${fpanel()}${rmChips(
+      [
+        R.cat && ['cat', (CATS.find(c => c[0] === R.cat) || [0, R.cat])[1]],
+        R.del && ['del', 'Arrives by ' + dt(R.del)],
+        R.ints && ['ints', 'Interests: ' + R.ints.map(il).join(', ')],
+        ...TYPES.filter(t => R[t[0]])
+      ].filter(Boolean),
+      'rrm',
+      'data-fclear'
+    )}<div style="max-width:320px;margin-top:16px"><label for="rsort">Sort by</label><select class="in" id="rsort">${[['match', 'Best match'], ...SORTS]
+      .map(o => `<option value="${o[0]}" ${R.sort === o[0] ? 'selected' : ''}>${o[1]}</option>`)
+      .join('')}</select></div><div style="margin-top:16px">${rb}</div>
 </section></div>`;
   },
 
@@ -1090,46 +1534,46 @@ ${fpanel()}<div style="margin-top:16px">${rb}</div>
   <div>
     <div class="tile">${ic('cal')}</div>
     <h1 style="font-size:32px">Occasions & Reminders</h1>
-    <p class="mut">Birthdays, anniversaries and festivals — never miss a meaningful date again.</p>
+    <p class="mut">Birthdays, anniversaries and festivals, soonest first. Saved on this device; this prototype doesn’t send reminders.</p>
   </div>
-  <button class="btn" data-modal="add-occasion">${ic('plus', 20)} Add Occasion</button>
+  <button class="btn" id="addocc" data-modal="add-occasion">${ic('plus', 20)} Add Occasion</button>
 </div>
 
 <div class="chips" style="margin:20px 0 24px">
-  <button class="chip" aria-pressed="${R.occFilter === 'all'}" data-occfilter="all">All Dates (${OCCASIONS.length})</button>
-  <button class="chip" aria-pressed="${R.occFilter === 'birthday'}" data-occfilter="birthday">${ic('birthday', 18)} Birthdays</button>
-  <button class="chip" aria-pressed="${R.occFilter === 'anniv'}" data-occfilter="anniv">${ic('rings', 18)} Anniversaries</button>
-  <button class="chip" aria-pressed="${R.occFilter === 'festival'}" data-occfilter="festival">${ic('bouquet', 18)} Celebrations</button>
+  <button class="chip" aria-pressed="${R.occFilter === 'all'}" id="of_all" data-occfilter="all">All Dates (${OCCASIONS.length})</button>
+  <button class="chip" aria-pressed="${R.occFilter === 'birthday'}" id="of_birthday" data-occfilter="birthday">${ic('birthday', 18)} Birthdays</button>
+  <button class="chip" aria-pressed="${R.occFilter === 'anniv'}" id="of_anniv" data-occfilter="anniv">${ic('rings', 18)} Anniversaries</button>
+  <button class="chip" aria-pressed="${R.occFilter === 'festival'}" id="of_festival" data-occfilter="festival">${ic('bouquet', 18)} Celebrations</button>
 </div>
 
 <div class="grid">
 ${
-  OCCASIONS.filter(o => R.occFilter === 'all' || o.occ === R.occFilter)
+  occSorted().filter(o => R.occFilter === 'all' || o.occ === R.occFilter)
     .map(
-      o => {
-        const occIcon = o.occ === 'birthday' ? 'birthday' : o.occ === 'anniv' || o.occ === 'wedding' ? 'rings' : o.occ === 'thanks' || o.occ === 'festival' ? 'bouquet' : 'bell';
-        return `
+      o => `
 <div class="card" style="display:flex;flex-direction:column;justify-content:space-between">
   <div>
     <div class="row" style="justify-content:space-between;align-items:center;margin-bottom:12px">
       <div class="row" style="align-items:center;gap:8px">
-        <div class="tile" style="width:36px;height:36px;margin:0;border-radius:10px">${ic(occIcon, 22)}</div>
-        <span class="date">${o.date}</span>
+        <div class="tile" style="width:36px;height:36px;margin:0;border-radius:10px">${ic(occIcon(o), 22)}</div>
+        <span class="date">${esc(o.date)}</span>
       </div>
-      <span class="tag ${o.days <= 10 ? 'b' : 'l'}">In ${o.days} days</span>
+      <span class="tag ${occDays(o) <= 10 ? 'b' : 'l'}">${dayTxt(occDays(o))}</span>
     </div>
-    <h3 style="margin:0 0 4px">${o.name}</h3>
-    <p class="mut" style="font-size:14px;margin-bottom:8px">${ic('user', 14)} For ${o.person}</p>
-    <p class="help" style="margin-bottom:16px">${o.note || 'No notes added'}</p>
+    <h3 style="margin:0 0 4px">${esc(o.name)}${sampleTag(o)}</h3>
+    <p class="mut" style="font-size:14px;margin-bottom:8px">${ic('user', 14)} For ${esc(o.person)}</p>
+    <p class="help" style="margin-bottom:16px">${o.note ? esc(o.note) : 'No notes added'}</p>
   </div>
   <div class="row" style="justify-content:space-between;gap:8px;padding-top:12px;border-top:1px solid var(--line)">
-    <a class="btn sm" href="#finder" data-pickocc="${o.id}">${ic('finder', 18)} Find Gift</a>
-    <button class="iconbtn" data-delocc="${o.id}" title="Delete occasion" style="width:40px;height:40px">${ic('trash', 18)}</button>
+    <a class="btn sm" href="#finder" data-pickocc="${o.id}" aria-label="Find a gift for ${esc(o.name)}">${ic('finder', 18)} Find Gift</a>
+    <button class="iconbtn" data-delocc="${o.id}" aria-label="Delete occasion: ${esc(o.name)}" title="Delete occasion">${ic('trash', 18)}</button>
   </div>
-</div>`;
-      }
+</div>`
     )
-    .join('') || '<div class="empty-state" style="grid-column:1/-1"><p>No occasions in this category yet.</p></div>'
+    .join('') ||
+  `<div class="empty-state" style="grid-column:1/-1"><div class="tile">${ic('cal', 32)}</div><h2>${OCCASIONS.length ? 'No occasions in this category' : 'No upcoming occasions'}</h2><p class="mut">${
+    OCCASIONS.length ? 'Choose another category, or add a new date.' : 'Add a birthday, anniversary or festival to plan ahead.'
+  }</p><button class="btn" data-modal="add-occasion">${ic('plus', 20)} Add an Occasion</button></div>`
 }
 </div>
 </section></div>`;
@@ -1144,30 +1588,31 @@ ${
     <h1 style="font-size:32px">My Recipients</h1>
     <p class="mut">Keep your loved ones’ tastes, interests and special dates all in one thoughtful place.</p>
   </div>
-  <button class="btn" data-modal="add-recipient">${ic('plus', 20)} Add Recipient</button>
+  <button class="btn" id="addrec" data-modal="add-recipient">${ic('plus', 20)} Add Recipient</button>
 </div>
 
 <div class="grid" style="margin-top:24px">
+${RECIPIENTS.length ? '' : `<div class="empty-state" style="grid-column:1/-1"><div class="tile">${ic('users', 32)}</div><h2>No recipients yet</h2><p class="mut">Add someone you often gift, and start the Gift Finder with their tastes filled in.</p><button class="btn" data-modal="add-recipient">${ic('plus', 20)} Add a Recipient</button></div>`}
 ${RECIPIENTS.map(
   r => `
 <div class="card" style="display:flex;flex-direction:column;justify-content:space-between">
   <div>
     <div class="row" style="margin-bottom:16px">
-      <div class="avatar" style="background:var(--${r.bg})">${r.avatar}</div>
+      <div class="avatar" style="background:var(--${esc(r.bg)})">${esc(r.avatar)}</div>
       <div>
-        <h3 style="margin:0">${r.name}</h3>
-        <span class="tag l" style="text-transform:capitalize">${r.who}</span>
+        <h3 style="margin:0">${esc(r.name)}${sampleTag(r)}</h3>
+        <span class="tag l" style="text-transform:capitalize">${esc((OPT.who.find(o => o[0] === r.who) || [0, r.who])[1])}</span>
       </div>
     </div>
-    <p style="font-size:14px;font-weight:700;margin:0 0 4px">${ic('cal', 14)} ${r.occs}</p>
-    <p class="mut" style="font-size:14px;margin-bottom:12px">${r.notes}</p>
+    <p style="font-size:14px;font-weight:700;margin:0 0 4px">${ic('cal', 14)} ${esc(r.occs)}</p>
+    <p class="mut" style="font-size:14px;margin-bottom:12px">${esc(r.notes)}</p>
     <div class="chips" style="margin-bottom:16px">
       ${r.ints.map(i => `<span class="tag">${il(i)}</span>`).join('')}
     </div>
   </div>
   <div class="row" style="justify-content:space-between;gap:8px;padding-top:12px;border-top:1px solid var(--line)">
-    <a class="btn sm" href="#finder" data-pickrec="${r.id}">${ic('gift', 18)} Find Gift for ${r.name}</a>
-    <button class="iconbtn" data-delrec="${r.id}" title="Delete recipient" style="width:40px;height:40px">${ic('trash', 18)}</button>
+    <a class="btn sm" href="#finder" data-pickrec="${r.id}">${ic('gift', 18)} Find Gift for ${esc(r.name)}</a>
+    <button class="iconbtn" data-delrec="${r.id}" aria-label="Delete recipient: ${esc(r.name)}" title="Delete recipient">${ic('trash', 18)}</button>
   </div>
 </div>`
 ).join('')}
@@ -1195,120 +1640,76 @@ ${
   !savedProducts.length
     ? `<div class="empty-state" style="margin-top:32px">
         <div class="tile">${ic('heart', 32)}</div>
-        <h2>No saved gifts yet</h2>
-        <p class="mut">Tap the heart icon on any gift while browsing to save it here for later.</p>
-        <div style="margin-top:20px">${btn(tr('cta', 'Find My Perfect Gift') + ' ' + ic('arrow', 20), '#finder')}</div>
+        <h2>Your saved gifts list is empty</h2>
+        <p class="mut">Tap the heart on any gift while browsing to keep it here for later.</p>
+        <div style="margin-top:20px">${btn('Explore Gifts ' + ic('arrow', 20), '#browse')}</div>
       </div>`
-    : `<ul class="rl" style="margin-top:24px">
-        ${savedProducts
-          .map(
-            p => `
-          <li>
-            <article class="card prod rc" aria-labelledby="t_${p.id}">
-              <div class="th" style="background:var(--${p.bg})">
-                <img src="${IMAGES[p.id] || 'images/candle.jpg'}" alt="${p.n}" class="p-img" loading="lazy">
-                <button class="iconbtn save" data-sv="${p.id}" aria-pressed="true" aria-label="Remove ${p.n}">${ic(
-              'heart',
-              20
-            )}</button>
-              </div>
-              <div class="bd">
-                <div class="chips" style="margin-bottom:8px">${badges(p)}</div>
-                <h3 id="t_${p.id}">${p.n}</h3>
-                <div class="row" style="justify-content:space-between;margin-bottom:12px">
-                  <span class="price">${inr(p.p)}</span>
-                  ${rate(p)}
-                </div>
-                <ul class="ml" style="margin-bottom:16px">
-                  <li>${ic('truck', 16)} Ships within 1 day</li>
-                  <li>${ic('leaf', 16)} Sustainable craftsmanship</li>
-                </ul>
-                <div class="row" style="gap:8px;margin-top:auto">
-                  <a class="btn sm" href="#product/${p.id}" style="flex:1">View & Personalize</a>
-                  <button class="btn ghost sm" data-addcart="${p.id}" title="Add to Cart">${ic('bag', 18)}</button>
-                </div>
-              </div>
-            </article>
-          </li>`
-          )
-          .join('')}
-      </ul>`
+    : `<ul class="rl" style="margin-top:24px">${savedProducts.map(p => pcard(p)).join('')}</ul>`
 }
 </section></div>`;
   },
 
   // --- Cart & Checkout Flow ---
   cart: () => {
-    let subtotal = 0;
-    const cartItems = CART.map(item => {
-      const p = PR.find(x => x.id === item.id) || PR[0];
-      const itemTot = p.p + (item.pe ? PE : 0) + (item.wr ? WR : 0);
-      subtotal += itemTot * (item.qty || 1);
-      return { ...item, p, itemTot };
-    });
-
-    const delivery = subtotal >= 999 || subtotal === 0 ? 0 : 60;
-    const grandTotal = subtotal + delivery;
+    const t = cartTotals();
+    const undo = R.undo
+      ? `<div class="msg ok row" role="status" style="justify-content:space-between;flex-wrap:wrap;margin-top:16px"><span style="display:flex;gap:8px;align-items:center">${ic('check')} Removed “${esc(
+          (PR.find(x => x.id === R.undo.item.id) || PR[0]).n
+        )}”.</span><button class="btn sec sm" id="undobtn" data-undo>Undo</button></div>`
+      : '';
 
     return `<div class="wrap"><section class="sec" style="margin-top:32px">
 <div class="tile">${ic('bag')}</div>
-<h1 style="font-size:32px">Your Cart (${CART.length})</h1>
+<h1 style="font-size:32px">Your Cart (${t.count})</h1>
 <p class="mut">Review your selected gifts, customized messages and packaging before checkout.</p>
-
+${undo}
 ${
-  !CART.length
+  !t.lines.length
     ? `<div class="empty-state" style="margin-top:24px">
         <div class="tile">${ic('bag', 32)}</div>
-        <h2>Your cart is currently empty</h2>
+        <h2>Your cart is empty</h2>
         <p class="mut">Find thoughtful gifts customized with personalized messages and gift wrap.</p>
-        <div style="margin-top:20px">${btn(tr('cta', 'Find My Perfect Gift') + ' ' + ic('arrow', 20), '#finder')}</div>
+        <div style="margin-top:20px">${btn('Continue Shopping', '#browse')}</div>
       </div>`
     : `<div class="gl" style="margin-top:24px">
         <div>
           <ul class="pvl">
-            ${cartItems
+            ${t.lines
               .map(
-                (item, idx) => `
-              <li class="card" style="display:flex;gap:16px;align-items:center;padding:16px">
-                <img src="${IMAGES[item.p.id] || 'images/candle.jpg'}" alt="${item.p.n}" style="width:56px;height:56px;border-radius:14px;object-fit:cover;flex-shrink:0">
-                <div style="flex:1">
-                  <h3 style="margin:0 0 4px;font-size:17px">${item.p.n}</h3>
-                  <p class="mut" style="font-size:14px;margin:0 0 6px">
-                    ${item.pe ? `<span class="tag b">Engraved: “${item.nm || 'Custom'}” (+₹149)</span> ` : ''}
-                    ${item.wr ? `<span class="tag l">Gift wrap (+₹60)</span>` : ''}
-                  </p>
-                  <div class="row" style="justify-content:space-between">
-                    <span class="price">${inr(item.itemTot)}</span>
-                    <div class="qty-stepper">
-                      <button class="qty-btn" data-cartqty="${idx}" data-delta="-1">-</button>
-                      <span class="qty-val">${item.qty || 1}</span>
-                      <button class="qty-btn" data-cartqty="${idx}" data-delta="1">+</button>
+                (l, idx) => `
+              <li class="card cl" style="display:flex;gap:16px;align-items:flex-start;padding:16px">
+                <img src="${IMAGES[l.p.id] || 'images/candle.jpg'}" alt="" style="width:56px;height:56px;border-radius:14px;object-fit:cover;flex-shrink:0">
+                <div style="flex:1;min-width:0">
+                  <h2 style="margin:0 0 4px;font-size:17px">${l.p.n}</h2>
+                  <p class="mut" style="font-size:14px;margin:0 0 6px;overflow-wrap:anywhere">${itemTags(l.item)}</p>
+                  <p class="help" style="margin:0 0 8px">${inr(l.unit)} each${l.pe ? ` · includes ${inr(PE)} personalization` : ''}${l.item.wr ? ` · includes ${inr(WR)} wrap` : ''}</p>
+                  <div class="row" style="justify-content:space-between;flex-wrap:wrap;gap:8px">
+                    <div class="qty-stepper" role="group" aria-label="Quantity of ${l.p.n}">
+                      <button class="qty-btn" id="qm_${idx}" data-cartqty="${idx}" data-delta="-1" aria-label="${l.qty === 1 ? 'Remove' : 'Decrease quantity of'} ${l.p.n}">−</button>
+                      <span class="qty-val" aria-label="Quantity ${l.qty}">${l.qty}</span>
+                      <button class="qty-btn" id="qp_${idx}" data-cartqty="${idx}" data-delta="1" aria-label="Increase quantity of ${l.p.n}">+</button>
                     </div>
+                    <span class="price">${inr(l.line)}</span>
                   </div>
                 </div>
-                <button class="iconbtn" data-delcart="${idx}" title="Remove item" style="width:36px;height:36px;flex-shrink:0">${ic(
-                  'trash',
-                  16
-                )}</button>
+                <button class="iconbtn" data-delcart="${idx}" aria-label="Remove ${l.p.n} from cart" title="Remove item" style="flex-shrink:0">${ic('trash', 16)}</button>
               </li>`
               )
               .join('')}
           </ul>
+          <a class="btn sec sm" href="#browse">‹ Continue Shopping</a>
         </div>
         
         <div>
           <div class="card">
             <h2 style="font-size:20px;margin-bottom:16px">Order Summary</h2>
-            <dl class="sy">
-              <div><dt>Subtotal</dt><dd>${inr(subtotal)}</dd></div>
-              <div><dt>Delivery</dt><dd>${delivery === 0 ? '<span class="tag g">FREE</span>' : inr(delivery)}</dd></div>
-              <div class="tot"><dt>Total Amount</dt><dd>${inr(grandTotal)}</dd></div>
-            </dl>
+            ${totalsDl(t)}
+            <p class="help" style="margin:8px 0 0">${t.del ? `Add ${inr(FREE_AT - t.sub)} more for free delivery.` : `Free delivery on orders of ${inr(FREE_AT)} and above.`}</p>
             <div class="card" style="background:var(--lav);margin:16px 0;padding:12px">
-              <p style="margin:0;font-size:14px;font-weight:700">${ic('truck', 16)} Estimated Delivery: ${dt(2)} - ${dt(4)}</p>
+              <p style="margin:0;font-size:14px;font-weight:700">${ic('truck', 16)} Estimated delivery: by ${dt(t.eta)}</p>
             </div>
             <a class="btn" href="#checkout" style="width:100%">${ic('check', 20)} Proceed to Checkout</a>
-            <p class="help" style="text-align:center;margin-top:10px">Secure checkout · Free returns on damaged items</p>
+            <p class="help" style="text-align:center;margin-top:10px">${DEMO_PAY}. You can review everything first.</p>
           </div>
         </div>
       </div>`
@@ -1318,139 +1719,195 @@ ${
 
   // --- Checkout Page ---
   checkout: () => {
-    let subtotal = 0;
-    CART.forEach(item => {
-      const p = PR.find(x => x.id === item.id) || PR[0];
-      subtotal += (p.p + (item.pe ? PE : 0) + (item.wr ? WR : 0)) * (item.qty || 1);
-    });
-    const delivery = subtotal >= 999 || subtotal === 0 ? 0 : 60;
-    const total = subtotal + delivery;
+    const t = cartTotals();
+    if (!t.lines.length)
+      return `<div class="wrap" style="max-width:760px"><section class="sec" style="margin-top:32px"><h1 style="font-size:32px">Checkout</h1><div class="empty-state"><div class="tile">${ic(
+        'bag',
+        32
+      )}</div><h2>Your cart is empty</h2><p class="mut">Add a gift to your cart before checking out.</p>${btn('Continue Shopping', '#browse')}</div></section></div>`;
 
-    return `<div class="wrap" style="max-width:760px"><section class="sec" style="margin-top:32px">
-<p class="crumb"><a href="#cart">Cart</a> › Checkout</p>
-<h1 style="font-size:32px">Checkout</h1>
-<p class="mut">Enter delivery details and place your order.</p>
+    const review = location.hash.split('/')[1] === 'review' && !Object.keys(vC(CHK)).length;
+    const demo = `<div class="msg info">${ic('info')}<span><b>${DEMO_PAY}.</b> This is a prototype: no payment details are collected, no money moves and nothing is shipped.</span></div>`;
+    const head = `<div class="wrap" style="max-width:760px"><section class="sec" style="margin-top:32px">${progress(['Delivery & payment', 'Review', 'Confirmation'], review ? 1 : 0)}<p class="crumb"><a href="#cart">Cart</a> › Checkout</p>`;
 
-<form id="chkform" onsubmit="event.preventDefault();location.hash='#order-success';">
+    if (review)
+      return `${head}<h1 style="font-size:32px">Review your order</h1><p class="mut">Check everything before placing your order. You can go back and change anything.</p>
+<div class="card" style="margin-bottom:16px"><div class="row" style="justify-content:space-between;flex-wrap:wrap"><h2 style="font-size:20px;margin:0;display:flex;align-items:center;gap:8px">${ic('pin', 22)} Delivering to</h2><a class="btn sec sm" href="#checkout" aria-label="Edit delivery details">Edit</a></div>
+<p style="margin:12px 0 0;overflow-wrap:anywhere"><b>${esc(CHK.name)}</b><br>${esc(CHK.addr)}<br>${esc(CHK.city)} ${esc(CHK.pin)}<br>Phone: ${esc(CHK.phone)}</p></div>
+<div class="card" style="margin-bottom:16px"><div class="row" style="justify-content:space-between;flex-wrap:wrap"><h2 style="font-size:20px;margin:0;display:flex;align-items:center;gap:8px">${ic('payment', 22)} Payment</h2><a class="btn sec sm" href="#checkout" aria-label="Edit payment method">Edit</a></div>
+<p style="margin:12px 0 0">${PAY[CHK.pay] || PAY.upi}</p><p class="help" style="margin:4px 0 0">${DEMO_PAY}</p></div>
+<div class="card" style="margin-bottom:16px"><div class="row" style="justify-content:space-between;flex-wrap:wrap"><h2 style="font-size:20px;margin:0;display:flex;align-items:center;gap:8px">${ic('bag', 22)} Items</h2><a class="btn sec sm" href="#cart" aria-label="Edit cart">Edit</a></div>
+<ul class="ml" style="font-size:16px;margin:12px 0">${t.lines.map(l => `<li>${ic('gift', 18)} <span>${esc(l.p.n)} × ${l.qty} · ${inr(l.line)}</span></li>`).join('')}</ul>${totalsDl(t)}
+<p class="help" style="margin:8px 0 0">${ic('truck', 16)} Estimated delivery: by ${dt(t.eta)}. This is an estimate.</p></div>
+${demo}<button class="btn" data-placeorder style="width:100%;margin-top:8px">${ic('check', 20)} Place Order (${inr(t.tot)})</button><a class="btn sec" href="#checkout" style="width:100%;margin-top:12px">‹ Back to delivery details</a></section></div>`;
+
+    return `${head}<h1 style="font-size:32px">Checkout</h1><p class="mut">Enter delivery details. They stay saved on this device if you leave this page.</p>
+<form id="chkform" novalidate>
+  <div data-errsum></div>
   <div class="card" style="margin-bottom:20px">
-    <h2 style="font-size:20px;margin-bottom:16px;display:flex;align-items:center;gap:8px">${ic('pin', 22)} 1. Shipping Address</h2>
-    <div class="fg">
-      <div>
-        <label for="c_name">Full Name</label>
-        <input class="in" id="c_name" required value="Anuja Dhope" placeholder="Your name">
-      </div>
-      <div>
-        <label for="c_phone">Phone Number</label>
-        <input class="in" id="c_phone" required value="+91 98765 43210" placeholder="10-digit mobile number">
-      </div>
-    </div>
-    <div style="margin-top:12px">
-      <label for="c_addr">Street Address</label>
-      <input class="in" id="c_addr" required value="402, Greenfield Meadows, Baner" placeholder="Flat, building, street">
-    </div>
-    <div class="fg" style="margin-top:12px">
-      <div>
-        <label for="c_city">City</label>
-        <input class="in" id="c_city" required value="Pune">
-      </div>
-      <div>
-        <label for="c_pin">PIN Code</label>
-        <input class="in" id="c_pin" required value="411045">
-      </div>
-    </div>
+    <h2 style="font-size:20px;margin-bottom:16px;display:flex;align-items:center;gap:8px">${ic('pin', 22)} 1. Delivery details</h2>
+    ${chkFields(true)}
   </div>
 
   <div class="card" style="margin-bottom:20px">
-    <h2 style="font-size:20px;margin-bottom:16px;display:flex;align-items:center;gap:8px">${ic('payment', 22)} 2. Payment Method</h2>
-    <div class="rog">
-      <label class="ro"><input type="radio" name="pay" value="upi" checked><span style="display:flex;align-items:center;gap:8px">${ic('payment', 20)} UPI / Google Pay / PhonePe</span></label>
-      <label class="ro"><input type="radio" name="pay" value="card"><span style="display:flex;align-items:center;gap:8px">${ic('payment', 20)} Credit / Debit Card</span></label>
-      <label class="ro"><input type="radio" name="pay" value="cod"><span style="display:flex;align-items:center;gap:8px">${ic('truck', 20)} Cash on Delivery</span></label>
-    </div>
+    <h2 style="font-size:20px;margin-bottom:16px;display:flex;align-items:center;gap:8px">${ic('payment', 22)} 2. Payment method</h2>
+    ${demo}
+    <fieldset class="optset" style="margin-top:12px"><legend class="sr">Payment method</legend><div class="rog">
+      ${[['upi', 'payment'], ['card', 'payment'], ['cod', 'truck']]
+        .map(x => `<label class="ro"><input type="radio" name="pay" value="${x[0]}" ${CHK.pay === x[0] ? 'checked' : ''}><span style="display:flex;align-items:center;gap:8px">${ic(x[1], 20)} ${PAY[x[0]]}</span></label>`)
+        .join('')}
+    </div></fieldset>
   </div>
 
   <div class="card" style="margin-bottom:24px">
-    <h2 style="font-size:20px;margin-bottom:12px;display:flex;align-items:center;gap:8px">${ic('bag', 22)} 3. Order Summary</h2>
-    <dl class="sy">
-      <div><dt>Items Total</dt><dd>${inr(subtotal)}</dd></div>
-      <div><dt>Shipping</dt><dd>${delivery === 0 ? 'FREE' : inr(delivery)}</dd></div>
-      <div class="tot"><dt>Total Payable</dt><dd>${inr(total)}</dd></div>
-    </dl>
+    <h2 style="font-size:20px;margin-bottom:12px;display:flex;align-items:center;gap:8px">${ic('bag', 22)} 3. Order summary</h2>
+    ${totalsDl(t)}
   </div>
 
-  <button class="btn" type="submit" style="width:100%">${ic('check', 20)} Place Order (${inr(total)})</button>
+  <button class="btn" type="submit" style="width:100%">Review Order ${ic('arrow', 20)}</button>
 </form>
 </section></div>`;
   },
 
   // --- Order Success Screen ---
   'order-success': () => {
-    CART = [];
-    sp();
-    return `<div class="wrap" style="max-width:640px"><section class="sec" style="margin-top:48px;text-align:center">
-<div class="logo-lg" style="margin:0 auto 20px;padding:8px"><img src="images/logo.png" alt="आपुलकी Logo" class="welcome-logo-img"></div>
+    const o = ORDERS.find(x => x.id === location.hash.split('/')[1]);
+    if (!o)
+      return `<div class="wrap" style="max-width:640px"><section class="sec" style="margin-top:48px"><h1 style="font-size:32px">We couldn’t find that order</h1><p class="mut">Orders are saved on this device.</p>${btn('Browse Gifts', '#browse')}</section></div>`;
+    return `<div class="wrap" style="max-width:640px"><section class="sec" style="margin-top:32px">${progress(['Delivery & payment', 'Review', 'Confirmation'], 3)}<div style="text-align:center">
+<div class="logo-lg" style="margin:0 auto 20px;padding:8px"><img src="images/logo.png" alt="" class="welcome-logo-img"></div>
 <h1 style="font-size:36px">Order Placed with Love! ♡</h1>
-<p class="lead mut">Thank you! Your order <b style="color:var(--coral)">#AAP-2026-8941</b> has been received and is being prepared with artisanal care.</p>
-
-<div class="card" style="text-align:left;margin:24px 0;background:var(--lav)">
-  <h3 style="margin:0 0 8px">${ic('truck')} Expected Delivery</h3>
-  <p style="font-size:20px;font-weight:800;margin:0 0 4px">Arrives by ${dt(3)}</p>
-  <p class="mut" style="font-size:14px;margin:0">Tracking link & SMS confirmation sent to +91 98765 43210.</p>
+<p class="lead mut">Thank you! Your order <b style="color:var(--coral)">#${o.id}</b> has been saved.</p></div>
+<div class="msg info">${ic('info')}<span><b>${DEMO_PAY}.</b> This is a prototype, so nothing is shipped and no SMS or email is sent.</span></div>
+<div class="card" style="text-align:left;margin:16px 0;background:var(--lav)">
+  <h2 style="margin:0 0 8px;font-size:18px;display:flex;align-items:center;gap:8px">${ic('truck')} Estimated delivery</h2>
+  <p style="font-size:20px;font-weight:800;margin:0 0 4px">Arrives by ${fdt(o.at + o.eta * 864e5)}</p>
+  <p class="help" style="margin:0;overflow-wrap:anywhere">To ${esc(o.addr.name)}, ${esc(o.addr.city)} ${esc(o.addr.pin)} · Total ${inr(o.tot)}</p>
 </div>
-
-<div class="row" style="justify-content:center;gap:12px;margin-top:24px">
-  <a class="btn" href="#home">${ic('home', 18)} Return Home</a>
+<div class="row" style="justify-content:center;gap:12px;margin-top:24px;flex-wrap:wrap">
+  <a class="btn" href="#order/${o.id}">${ic('truck', 18)} Track This Order</a>
+  <a class="btn sec" href="#orders">${ic('box', 18)} My Orders</a>
   <a class="btn sec" href="#browse">Browse More Gifts</a>
 </div>
 </section></div>`;
   },
 
+  // --- My Orders ---
+  orders: () => {
+    const row = o => {
+      const n = o.items.reduce((a, i) => a + i.qty, 0);
+      return `<li class="card">
+  <div class="row" style="justify-content:space-between;flex-wrap:wrap;gap:8px"><h3 style="margin:0">Order #${o.id}</h3>${ordTag(o)}</div>
+  <p class="mut" style="margin:4px 0 8px;font-size:14px">Placed ${fdt(o.at)} · ${n} ${n === 1 ? 'item' : 'items'} · ${inr(o.tot)}</p>
+  <p style="margin:0 0 4px">${o.items.map(i => esc(i.n) + ' × ' + i.qty).join(', ')}</p>
+  <p style="margin:0 0 12px;font-weight:700">${ic('truck', 16)} ${o.cancelled ? 'Cancelled ' + fdt(o.cancelled) : ordDone(o) ? 'Delivered' : 'Estimated delivery: by ' + ordEta(o)}</p>
+  <a class="btn sec sm" href="#order/${o.id}" aria-label="View details of order ${o.id}">View Details</a>
+</li>`;
+    };
+    const cur = ORDERS.filter(o => !o.cancelled && !ordDone(o));
+    const prev = ORDERS.filter(o => o.cancelled || ordDone(o));
+    return `<div class="wrap" style="max-width:760px"><section class="sec" style="margin-top:32px">
+<div class="tile">${ic('box')}</div>
+<h1 style="font-size:32px">My Orders</h1>
+<p class="mut">Orders you place are saved in this browser, on this device.</p>
+${
+  !ORDERS.length
+    ? `<div class="empty-state" style="margin-top:24px"><div class="tile">${ic('box', 32)}</div><h2>No orders yet</h2><p class="mut">When you place an order, you can track it here.</p>${btn('Continue Shopping', '#browse')}</div>`
+    : `${simNote()}<h2 style="margin-top:24px">Current orders (${cur.length})</h2>${
+        cur.length ? `<ul class="pvl">${cur.map(row).join('')}</ul>` : '<p class="mut">Nothing on the way right now.</p>'
+      }<h2 style="margin-top:24px">Previous orders (${prev.length})</h2>${prev.length ? `<ul class="pvl">${prev.map(row).join('')}</ul>` : '<p class="mut">Delivered and cancelled orders will appear here.</p>'}`
+}
+</section></div>`;
+  },
+
+  // --- Order Details ---
+  order: () => {
+    const o = orderOf();
+    if (!o)
+      return `<div class="wrap" style="max-width:720px"><section class="sec" style="margin-top:32px"><h1 style="font-size:32px">We couldn’t find that order</h1>${msg('warn', 'alert', 'Orders are saved on the device where they were placed.')}<div style="margin-top:24px">${btn('Back to My Orders', '#orders')}</div></section></div>`;
+    const cnt = o.items.reduce((a, i) => a + i.qty, 0);
+    return `<div class="wrap" style="max-width:760px"><section class="sec" style="margin-top:32px">
+<p class="crumb"><a href="#orders">My Orders</a> › Order #${o.id}</p>
+<div class="row" style="justify-content:space-between;flex-wrap:wrap;gap:8px"><h1 style="font-size:28px;margin:0;overflow-wrap:anywhere">Order #${o.id}</h1>${ordTag(o)}</div>
+<p class="mut" style="margin-top:4px">Placed ${fdt(o.at)}</p>
+
+<div class="card" style="margin-bottom:16px">
+  <h2 style="font-size:20px">Delivery status</h2>
+  <p style="font-size:20px;font-weight:800;margin:0 0 12px">${o.cancelled ? 'This order was cancelled' : ordDone(o) ? 'Delivered' : 'Estimated delivery: by ' + ordEta(o)}</p>
+  ${timeline(o)}
+  ${simNote()}
+  ${
+    o.cancelled || ordDone(o)
+      ? ''
+      : `<button class="btn sec sm" id="oadv" data-oadvance>Demo: move to next status</button><p class="help" style="margin:4px 0 0">For trying out the timeline without waiting.</p>`
+  }
+</div>
+
+<div class="card" style="margin-bottom:16px">
+  <h2 style="font-size:20px">Items</h2>
+  <ul class="pvl" style="margin-bottom:8px">${o.items
+    .map(
+      i => `<li style="padding:0 0 8px;border-bottom:1px solid var(--line)"><div class="row" style="justify-content:space-between;gap:8px"><b>${esc(i.n)}</b><span>${inr(i.unit * i.qty)}</span></div><span class="help" style="display:block;margin:0 0 4px">Quantity: ${i.qty} · ${inr(i.unit)} each</span><span style="overflow-wrap:anywhere">${itemTags(i)}</span>${
+        i.gm ? `<p class="help" style="margin:4px 0 0;overflow-wrap:anywhere">Card message: “${esc(i.gm)}”${i.gf ? ' from ' + esc(i.gf) : ''}</p>` : ''
+      }</li>`
+    )
+    .join('')}</ul>
+  ${totalsDl({ count: cnt, sub: o.sub, del: o.del, tot: o.tot })}
+</div>
+
+<div class="grid" style="margin-bottom:16px">
+  <div class="card"><h2 style="font-size:20px;display:flex;align-items:center;gap:8px">${ic('pin', 22)} Delivery address</h2><p style="margin:0;overflow-wrap:anywhere"><b>${esc(o.addr.name)}</b><br>${esc(o.addr.addr)}<br>${esc(o.addr.city)} ${esc(o.addr.pin)}<br>Phone: ${esc(o.addr.phone)}</p></div>
+  <div class="card"><h2 style="font-size:20px;display:flex;align-items:center;gap:8px">${ic('payment', 22)} Payment details</h2><p style="margin:0">${PAY[o.pay] || PAY.upi}</p><p class="help" style="margin:4px 0 0">${DEMO_PAY}</p></div>
+</div>
+
+<div class="card" style="margin-bottom:16px">
+  <h2 style="font-size:20px;display:flex;align-items:center;gap:8px">${ic('support', 22)} Need help?</h2>
+  <p class="mut">Tell us if this order is delayed, missing or something else is wrong.</p>
+  <button class="btn sec sm" id="ohelp" data-support>Contact Support</button>
+  ${
+    (o.support || []).length
+      ? `<h3 style="margin-top:16px">Your requests</h3><ul class="ml">${o.support
+          .map(s => `<li>${ic('info', 16)} <span>${esc(s.type)} · ${fdt(s.at)}${s.note ? ': ' + esc(s.note) : ''}</span></li>`)
+          .join('')}</ul><p class="help" style="margin:0">Saved on this device. No support team is connected in this prototype, so nobody has been contacted.</p>`
+      : ''
+  }
+</div>
+
+${
+  o.cancelled
+    ? ''
+    : canCancel(o)
+    ? `<div class="card" style="margin-bottom:16px"><h2 style="font-size:20px">Changed your mind?</h2><p class="mut">You can cancel until the order is shipped.</p><button class="btn danger sm" id="ocancel" data-ocancel>Cancel Order</button></div>`
+    : ordDone(o)
+    ? ''
+    : `<p class="help">${ic('info', 14)} This order has shipped, so it can no longer be cancelled.</p>`
+}
+<a class="btn sec sm" href="#orders">‹ Back to My Orders</a>
+</section></div>`;
+  },
+
   // --- Browse All Products Page ---
   browse: () => {
-    const activeCat = R.cat;
-    const prods = PR.filter(p => !activeCat || p.c === activeCat);
     return `<div class="wrap"><section class="sec" style="margin-top:32px">
-<div class="row" style="justify-content:space-between;flex-wrap:wrap;gap:16px">
-  <div>
-    <div class="tile">${ic('gift')}</div>
-    <h1 style="font-size:32px">Browse All Gifts</h1>
-    <p class="mut">Handmade, personalized and eco-friendly gifts from master artisans across India.</p>
-  </div>
+<div class="tile">${ic('gift')}</div>
+<h1 style="font-size:32px">Browse All Gifts</h1>
+<p class="mut">Handmade, personalized and eco-friendly gifts from makers across India.</p>
+
+<div class="chips" role="group" aria-label="Category" style="margin:20px 0 16px">
+  <button class="chip" id="bc_all" aria-pressed="${!B.cat}" data-bcat="">All (${PR.length})</button>
+  ${CATS.map(c => `<button class="chip" id="bc_${c[0]}" aria-pressed="${B.cat === c[0]}" data-bcat="${c[0]}">${c[1]}</button>`).join('')}
 </div>
 
-<div class="chips" style="margin:20px 0 24px">
-  <button class="chip" aria-pressed="${!activeCat}" data-bcat="">All (${PR.length})</button>
-  ${CATS.map(c => `<button class="chip" aria-pressed="${activeCat === c[0]}" data-bcat="${c[0]}">${c[1]}</button>`).join('')}
+<div class="card fp" style="margin-bottom:24px"><div class="fg bfg">
+  <div class="bfq"><label for="bq">Search gifts</label><input class="in" id="bq" type="search" value="${esc(B.q)}" placeholder="e.g. candle" autocomplete="off"></div>
+  <div><label for="bsort">Sort by</label><select class="in" id="bsort"><option value="featured">Featured</option>${SORTS.map(o => `<option value="${o[0]}" ${B.sort === o[0] ? 'selected' : ''}>${o[1]}</option>`).join('')}</select></div>
+  <div><label for="bbud">Budget</label><select class="in" id="bbud"><option value="">Any budget</option>${budOpts.map(o => `<option value="${o[0]}" ${B.bud === o[0] ? 'selected' : ''}>${LB(o[0], o[1])}</option>`).join('')}</select></div>
+  <div><label for="bdel">Delivery date</label><select class="in" id="bdel"><option value="0">Any date</option>${[2, 3, 5].map(d => `<option value="${d}" ${B.del === d ? 'selected' : ''}>By ${dt(d)}</option>`).join('')}</select></div>
+</div>
+<fieldset class="optset" style="margin-top:16px"><legend>Gift type</legend><div class="chips" style="margin-top:8px">${TYPES.map(t => `<button class="fc" id="bt_${t[0]}" data-bt="${t[0]}" aria-pressed="${!!B[t[0]]}">${t[1]}</button>`).join('')}</div></fieldset>
 </div>
 
-<ul class="rl">
-  ${prods
-    .map(
-      (p, k) => `
-    <li>
-      <article class="card prod rc">
-        <div class="th" style="background:var(--${p.bg})">
-          <img src="${IMAGES[p.id] || 'images/candle.jpg'}" alt="${p.n}" class="p-img" loading="lazy">
-          <button class="iconbtn save" data-sv="${p.id}" aria-pressed="${SV.includes(p.id)}" aria-label="Save ${p.n}">${ic('heart', 20)}</button>
-        </div>
-        <div class="bd">
-          <div class="chips" style="margin-bottom:8px">${badges(p)}</div>
-          <h3>${p.n}</h3>
-          <div class="row" style="justify-content:space-between;margin-bottom:8px">
-            <span class="price">${inr(p.p)}</span>
-            ${rate(p)}
-          </div>
-          <p class="mut" style="font-size:14px;margin-bottom:16px">${p.ds.slice(0, 75)}…</p>
-          <div class="row" style="gap:8px;margin-top:auto">
-            <a class="btn sm" href="#product/${p.id}" style="flex:1">View Details</a>
-            <button class="btn ghost sm" data-addcart="${p.id}" title="Add to Cart">${ic('bag', 18)}</button>
-          </div>
-        </div>
-      </article>
-    </li>`
-    )
-    .join('')}
-</ul>
+<div id="bres">${browseBody()}</div>
 </section></div>`;
   },
 
@@ -1472,58 +1929,39 @@ ${
   </div>
 </div>
 
-<ul class="rl">
-  ${localProds
-    .map(
-      p => `
-    <li>
-      <article class="card prod rc">
-        <div class="th" style="background:var(--${p.bg})">
-          <img src="${IMAGES[p.id] || 'images/candle.jpg'}" alt="${p.n}" class="p-img" loading="lazy">
-        </div>
-        <div class="bd">
-          <div class="chips" style="margin-bottom:8px">${badges(p)}</div>
-          <h3>${p.n}</h3>
-          <p class="price">${inr(p.p)}</p>
-          <p class="why" style="margin-bottom:16px"><b>Maker:</b> ${p.mk || 'Local artisanal unit'}</p>
-          <a class="btn sm" href="#product/${p.id}" style="margin-top:auto">Explore Gift</a>
-        </div>
-      </article>
-    </li>`
-    )
-    .join('')}
-</ul>
+<ul class="rl">${localProds.map(p => pcard(p, `<p class="why" style="margin:0 0 12px"><b>Maker:</b> ${p.mk || 'Local artisanal unit'}</p>`)).join('')}</ul>
 </section></div>`;
   },
 
   // --- Gift Together ---
   together: () => {
+    const q = new URLSearchParams(location.hash.split('?')[1] || '');
+    const cost = Math.max(0, +q.get('cost') || 2000);
+    const people = Math.min(10, Math.max(2, +q.get('people') || 4));
     return `<div class="wrap" style="max-width:720px"><section class="sec" style="margin-top:32px">
 <div class="tile">${ic('split')}</div>
 <h1 style="font-size:32px">Gift Together</h1>
-<p class="mut">Invite friends, siblings or colleagues to split the cost of a premium, unforgettable gift.</p>
+<p class="mut">Work out how to split the cost of a special gift with friends, siblings or colleagues.</p>
 
 <div class="card" style="margin:24px 0">
   <h2 style="font-size:20px;margin-bottom:12px">Split Calculator</h2>
   <label for="gt_cost">Gift Value (₹)</label>
-  <input class="in" id="gt_cost" type="number" value="2000" oninput="$('#gt_res').textContent='₹'+Math.round(this.value/$('#gt_people').value)">
+  <input class="in" id="gt_cost" type="number" min="0" inputmode="numeric" value="${cost}" oninput="$('#gt_res').textContent=inr(Math.round((+this.value||0)/$('#gt_people').value))">
   
   <div style="margin-top:16px">
-    <label for="gt_people">Number of Contributors: <b id="gt_pnum">4</b></label>
-    <input id="gt_people" type="range" min="2" max="10" value="4" style="width:100%;height:44px;accent-color:var(--coral)" oninput="$('#gt_pnum').textContent=this.value;$('#gt_res').textContent='₹'+Math.round($('#gt_cost').value/this.value)">
+    <label for="gt_people">Number of Contributors: <b id="gt_pnum">${people}</b></label>
+    <input id="gt_people" type="range" min="2" max="10" value="${people}" style="width:100%;height:44px;accent-color:var(--coral)" oninput="$('#gt_pnum').textContent=this.value;$('#gt_res').textContent=inr(Math.round((+$('#gt_cost').value||0)/this.value))">
   </div>
   
   <div class="card" style="background:var(--lav);margin-top:20px;text-align:center">
-    <span class="mut">Each person pays only</span>
-    <h2 style="font-size:36px;color:var(--coral);margin:4px 0" id="gt_res">₹500</h2>
-    <p class="help" style="margin:0">Free shared greeting card link included for all contributors!</p>
+    <span>Each person pays only</span>
+    <p style="font-size:36px;font-weight:800;line-height:1.2;color:var(--coral);margin:4px 0" id="gt_res" aria-live="polite">${inr(Math.round(cost / people))}</p>
+    <p class="help" style="margin:0;color:inherit">Prototype: this works out the split and shares it. It doesn’t collect money from anyone.</p>
   </div>
 </div>
 
-<button class="btn" data-toast="Group gifting invite link copied to clipboard!" style="width:100%">${ic(
-      'split',
-      20
-    )} Create Group Gift & Share Link</button>
+<button class="btn" data-sharesplit style="width:100%">${ic('split', 20)} Copy a Link to This Split</button>
+<div id="gt_link" aria-live="polite" style="margin-top:12px"></div>
 </section></div>`;
   },
 
@@ -1534,7 +1972,8 @@ ${
 <h1 style="font-size:32px">Corporate Gifting</h1>
 <p class="mut">Thoughtful, sustainable gifts for employees, clients and festive hampers with custom branding.</p>
 
-<form class="card" style="margin-top:24px" onsubmit="event.preventDefault();toast('Quote request received! Our team will contact you in 2 hours.');">
+<form class="card" id="coform" novalidate style="margin-top:24px">
+  <div data-errsum></div>
   <div class="fg">
     <div>
       <label for="co_name">Company Name</label>
@@ -1554,6 +1993,7 @@ ${
     <textarea class="in" id="co_msg" placeholder="Tell us about your team, event, and budget per hamper"></textarea>
   </div>
   <button class="btn" type="submit" style="margin-top:20px;width:100%">Request Corporate Catalog & Quote</button>
+  <p class="help" style="margin:8px 0 0">Prototype: this form checks your details but isn’t connected to a team yet, so nothing is sent.</p>
 </form>
 </section></div>`;
   },
@@ -1584,29 +2024,29 @@ ${
     const tot = p.p + (pe ? PE : 0) + (o.wr ? WR : 0);
     const vws = [
       [p.ic, p.bg, 'main view'],
-      [p.ic, 'lav', 'close-up of the details'],
-      ['gift', 'blush', 'gift-wrapped']
+      [p.ic, 'lav', 'close-up of the details']
     ];
     const v = vws[R.pv] || vws[0];
     const wl = [
       ok && f.i.length && `Matches ${w}’s interest in ${f.i.map(il).join(' and ').toLowerCase()}.`,
-      ok && f.o && `Well suited to a ${lab('occ')} gift.`,
+      ok && f.o && F.occ !== 'oother' && `Well suited to a ${lab('occ')} gift.`,
       p.h && 'Handmade, so each one is a little different.',
       p.s && 'Made with sustainable materials.',
       p.l && `Made locally in ${p.l}.`,
       ok && (inb ? `Within your ${lab('bud')} budget.` : 'warn')
     ].filter(Boolean);
 
-    return `<div class="wrap"><nav aria-label="Breadcrumb" style="margin-top:24px"><p class="crumb" style="margin:0"><a href="#finder">Gift Finder</a> › <a href="#recommendations">${tr(
-      'rt',
-      'Gifts picked for them ♡'
-    )}</a> › <span aria-current="page">${p.n}</span></p></nav>
-<div class="pd"><section class="a1" aria-label="Product images"><div class="pimg" style="background:var(--${v[1]})"><img src="${IMAGES[p.id] || 'images/candle.jpg'}" alt="${p.n}" class="pimg-main"></div><div class="chips" role="group" aria-label="Choose an image view" style="margin-top:12px">${vws
+    const from = R.from || (ok ? 'recommendations' : 'browse');
+    const fromL = { recommendations: tr('rt', 'Gifts picked for them ♡'), browse: 'Browse All Gifts', saved: 'Saved Gifts', local: 'Sustainable Gifts', home: 'Home' }[from];
+    return `<div class="wrap"><nav aria-label="Breadcrumb" style="margin-top:24px"><p class="crumb" style="margin:0">${
+      from === 'recommendations' ? `<a href="#finder">Gift Finder</a> › ` : ''
+    }<a href="#${from}">${fromL}</a> › <span aria-current="page">${p.n}</span></p></nav>
+<div class="pd"><section class="a1" aria-label="Product images"><div class="pimg" style="background:var(--${v[1]})"><img src="${IMAGES[p.id] || 'images/candle.jpg'}" alt="${pAlt(p)}${R.pv ? ', close-up' : ''}" class="pimg-main ${R.pv ? 'zoom' : ''}">${phTag(p)}</div><div class="chips" role="group" aria-label="Choose an image view" style="margin-top:12px">${vws
       .map(
         (x, k) =>
-          `<button class="pth" id="pv${k}" data-pv="${k}" aria-pressed="${R.pv == k}" aria-label="Show ${x[2]}" style="background:var(--${x[1]})"><img src="${IMAGES[p.id] || 'images/candle.jpg'}" alt="${x[2]}" style="width:100%;height:100%;object-fit:cover"></button>`
+          `<button class="pth" id="pv${k}" data-pv="${k}" aria-pressed="${R.pv == k}" aria-label="Show ${x[2]}" style="background:var(--${x[1]})"><img src="${IMAGES[p.id] || 'images/candle.jpg'}" alt="" class="${k ? 'zoom' : ''}" style="width:100%;height:100%;object-fit:cover"></button>`
       )
-      .join('')}</div><p class="help">Artisanal studio photography · Handcrafted authentic keepsake</p></section>
+      .join('')}</div><p class="help">${PHOTO_PH.includes(p.id) ? 'Placeholder photo: this picture shows a different product until a real photo is added.' : 'Sample photo for this prototype.'}</p></section>
 <section class="a2" aria-labelledby="pn"><div class="chips" style="margin-bottom:8px">${badges(p)}</div><h1 id="pn" style="font-size:30px">${p.n}</h1><p style="margin:0 0 8px">${rate(
       p
     )}</p><p class="price" style="font-size:30px;margin:0 0 16px">${inr(p.p)}</p>
@@ -1621,14 +2061,13 @@ ${
       'info',
       16
     )} This date is an estimate. We confirm it again at checkout.</li></ul></div>
-<fieldset class="optset"><legend class="sr">Gift options</legend>${popt(
-      'pe',
-      'Personalize this gift',
-      p.pe ? `${p.pe}. +${inr(PE)}, adds 1 day.` : 'Message card only. Free, no delay.',
-      o.pe
-    )}${popt('wr', 'Gift wrapping', `Hand-wrapped with a ribbon and a tag. +${inr(WR)}, no delay.`, o.wr)}</fieldset>
+<fieldset class="optset"><legend class="sr">Gift options</legend>${
+      p.pe
+        ? popt('pe', 'Personalize this gift', `${p.pe}. +${inr(PE)}, adds 1 day.`, o.pe)
+        : `<p class="help" style="margin:0 0 12px">${ic('info', 14)} This gift can’t be engraved. A free message card is available.</p>`
+    }${popt('wr', 'Gift wrapping', `Hand-wrapped with a ribbon and a tag. +${inr(WR)}, no delay.`, o.wr)}</fieldset>
 <p class="price" aria-live="polite" style="margin:8px 0 16px">Total so far: ${inr(tot)}</p>
-<div class="row" style="flex-wrap:wrap"><a class="btn" href="#personalize/${id}" style="flex:1">${tr('pcn', 'Personalize & Continue')} ${ic(
+<div class="row" style="flex-wrap:wrap;gap:8px"><button class="btn" id="pdatc" data-pdatc style="flex:1 1 100%">${ic('bag', 20)} ${tr('atc', 'Add to Cart')}</button><a class="btn sec" href="#personalize/${id}" style="flex:1 1 auto">${tr('pcn', 'Personalize & Continue')} ${ic(
       'arrow',
       20
     )}</a><button class="btn sec" id="sv_${id}" data-sv="${id}" aria-pressed="${sv}">${ic('heart', 20)} ${sv ? 'Saved' : 'Save Gift'}</button></div><p class="help" style="margin-top:8px">Nothing is charged yet. You can review everything first.</p></section>
@@ -1657,7 +2096,7 @@ ${
       )}</div><div><p style="margin:0">${p.mk}</p>${p.l ? `<p class="help" style="margin:4px 0 0">Local maker, ${p.l}</p>` : ''}</div></div></section>`
     : ''
 }
-<p class="help" style="margin-top:24px">Stock, dates, prices and reviews are updated live.</p><a class="btn sec sm" href="#recommendations">‹ Back to gift picks</a></div></div></div>`;
+<p class="help" style="margin-top:24px">Prototype: stock, dates, prices and reviews are sample data.</p><a class="btn sec sm" href="#${from}">‹ Back to ${from === 'recommendations' ? 'gift picks' : fromL}</a></div></div></div>`;
   },
 
   personalize: () => {
@@ -1701,7 +2140,7 @@ ${
     )} Delivery</h2><p style="font-size:20px;font-weight:800;margin:0">Arrives by ${dt(c.dl)}</p>${
       c.pe ? `<p class="help" style="margin:4px 0 0">${ic('info', 14)} Personalizing adds 1 day. It is included.</p>` : ''
     }</div>
-<div class="card" style="margin-bottom:16px"><h2 style="font-size:20px">Price summary</h2>${sumry(p, o)}</div>
+${selsum(p, o)}<div class="card" style="margin-bottom:16px"><h2 style="font-size:20px">Price summary</h2>${sumry(p, o)}</div>
 <button class="btn" data-pvg style="width:100%">${tr('pvg', 'Preview My Gift')} ${ic('arrow', 20)}</button><p class="help" style="margin-top:8px">Next: ${
       gc ? 'write your greeting card' : 'see how your gift will look'
     }.</p><a class="btn sec sm" href="#product/${id}">‹ Back to gift details</a></section></div>`;
@@ -1720,7 +2159,7 @@ ${
 <div class="gl"><div><h2 style="font-size:20px">Card preview</h2><div id="lp">${gcard(o)}</div><div style="margin-top:16px"><button class="btn sec sm" data-say aria-label="Listen to your card message">${ic(
       'mic',
       18
-    )} Listen</button></div><div id="sayst" aria-live="polite" style="margin-top:8px"></div></div>
+    )} Listen</button></div><div id="sayst" aria-live="polite" style="margin-top:8px"></div><div style="margin-top:16px">${selsum(p, o)}</div></div>
 <div><fieldset class="optset" style="margin-bottom:16px"><legend style="font-weight:800;margin-bottom:8px">Card style</legend><div class="rog">${GST.map(
       g => `<label class="ro"><input type="radio" name="gs" value="${g[0]}" id="gs_${g[0]}" ${gsOf(o)[0] === g[0] ? 'checked' : ''}><span>${ic(g[2], 20)} ${g[1]}</span></label>`
     ).join('')}</div></fieldset>
@@ -1753,7 +2192,7 @@ ${fld('gm', 'Your message (required)', 'Choose an idea above or write your own. 
     const ms = [];
     Object.keys(vP(p, o)).length && ms.push(['Your personalization needs a name', '#personalize/' + id]);
     gc && Object.keys(vG(o)).length && ms.push(['Your greeting card is not finished', '#card/' + id]);
-    return `<div class="wrap"><section class="sec" style="margin-top:32px">${prog(2)}<p class="crumb"><a href="#card/${id}">Greeting card</a> › Preview</p><h1 style="font-size:32px">Here’s how your gift will look</h1><p class="mut">Check everything once. You can change anything before you add it to your cart.</p>
+    return `<div class="wrap"><section class="sec" style="margin-top:32px">${prog(2)}<p class="crumb"><a href="#card/${id}">Greeting card</a> › Preview</p><h1 style="font-size:32px">Here’s how your gift will look</h1><p class="mut">This is a preview: nothing is in your cart yet. You can change anything first, and your choices are kept.</p>
 ${
   ms.length
     ? `<div role="alert">${msg('warn', 'alert', 'A few details are missing.')}<ul class="ml">${ms
@@ -1763,7 +2202,7 @@ ${
 }
 <div class="pvw"><div><h2 style="font-size:20px">Your gift</h2><div class="pimg" style="background:var(--${
       p.bg
-    });position:relative;overflow:hidden;min-height:260px;padding:0;display:flex;align-items:center;justify-content:center"><img src="${IMAGES[p.id] || 'images/candle.jpg'}" alt="${p.n}" class="pimg-main">${c.pe ? `<div class="plate" role="img" aria-label="Engraved text: ${esc(o.nm || '')}${o.ln ? ', ' + esc(o.ln) : ''}" style="position:absolute;bottom:16px">${plate(o)}</div>` : ''}</div><p class="help">${
+    });position:relative;overflow:hidden;padding:0;display:flex;align-items:center;justify-content:center"><img src="${IMAGES[p.id] || 'images/candle.jpg'}" alt="${p.n}" class="pimg-main">${c.pe ? `<div class="plate" role="img" aria-label="Engraved text: ${esc(o.nm || '')}${o.ln ? ', ' + esc(o.ln) : ''}" style="position:absolute;bottom:16px">${plate(o)}</div>` : ''}</div><p class="help">${
       c.pe ? 'Personalized: ' + p.pe : 'Not personalized'
     }</p></div>
 <div><h2 style="font-size:20px">Wrapped${gc ? ' with your card' : ''}</h2><div style="text-align:center">${
@@ -1786,7 +2225,7 @@ ${gc ? `<h2 style="font-size:20px;margin-top:24px">Greeting card</h2><div style=
 <div class="row" style="flex-wrap:wrap"><button class="btn" data-atc style="flex:1" ${ms.length ? 'disabled aria-describedby="atcn"' : ''}>${ic('bag', 20)} ${tr(
       'atc',
       'Add to Cart'
-    )}</button><button class="btn sec" id="sv_${id}" data-sv="${id}" aria-pressed="${sv}">${ic('heart', 20)} ${sv ? 'Saved' : 'Save Gift'}</button></div>${
+    )}</button><button class="btn sec" id="sv_${id}" data-sv="${id}" aria-pressed="${sv}">${ic('heart', 20)} ${sv ? 'Saved' : 'Save Gift'}</button><a class="btn sec" href="${gc ? '#card/' : '#personalize/'}${id}">‹ Back</a></div>${
       ms.length ? `<p class="help e" id="atcn">${ic('alert', 14)} Finish the missing details above to add this gift.</p>` : ''
     }</section></div>`;
   },
@@ -1796,16 +2235,22 @@ ${gc ? `<h2 style="font-size:20px;margin-top:24px">Greeting card</h2><div style=
   )}</div><h1 style="font-size:32px">${tr('n_profile', 'Profile & Settings')}</h1><p class="mut">Manage preferences, account settings, accessibility, and reminders.</p>
 <div class="grid" style="margin-top:24px">
   <div class="card">
-    <h3>${ic('user')} Account Details</h3>
-    <p class="mut">Anuja Dhope · anuja.dhope@example.com</p>
-    <button class="btn ghost sm" data-toast="Profile updated.">Edit Name</button>
+    <h3>${ic('box')} My Orders</h3>
+    <p class="mut">${ORDERS.length ? ORDERS.length + (ORDERS.length === 1 ? ' order' : ' orders') + ' placed on this device.' : 'No orders yet.'}</p>
+    <a class="btn ghost sm" href="#orders">View My Orders</a>
+  </div>
+  <div class="card">
+    <h3>${ic('user')} Contact Details</h3>
+    <p class="mut" style="overflow-wrap:anywhere">${CHK.name ? esc(CHK.name) + (CHK.phone ? ' · ' + esc(CHK.phone) : '') : 'Not added yet. Details you enter at checkout appear here.'}</p>
+    <button class="btn ghost sm" id="edname" data-editdetails aria-label="Edit contact details">${CHK.name ? 'Edit' : 'Add'} Details</button>
   </div>
   <div class="card">
     <h3>${ic('pin')} Saved Address</h3>
-    <p class="mut">402, Greenfield Meadows, Baner, Pune 411045</p>
-    <button class="btn ghost sm" data-toast="Address saved.">Manage Addresses</button>
+    <p class="mut" style="overflow-wrap:anywhere">${CHK.addr ? esc(CHK.addr) + ', ' + esc(CHK.city) + ' ' + esc(CHK.pin) : 'No address saved yet.'}</p>
+    <button class="btn ghost sm" id="edaddr" data-editdetails aria-label="Edit saved address">${CHK.addr ? 'Edit' : 'Add'} Address</button>
   </div>
 </div>
+<p class="help" style="margin-top:12px">Saved only in this browser, on this device. There are no accounts in this prototype.</p>
 <div style="margin-top:20px">${btn(ic('sun', 20) + ' ' + tr('a_t', 'Accessibility settings'), '#access')}</div>
 </section></div>`,
 
@@ -1881,13 +2326,7 @@ ${gc ? `<h2 style="font-size:20px;margin-top:24px">Greeting card</h2><div style=
   ])}</div></section>
 <section class="sec"><h2>Form</h2><div class="card" style="max-width:480px"><label for="n">Recipient name</label><input class="in" id="n" placeholder="e.g. Aai"><p class="help">We use this on the greeting card.</p><label for="m">Message</label><textarea class="in err" id="m" aria-describedby="me"></textarea><p class="help e" id="me">Please write a short message.</p><button class="btn">Continue</button></div></section>
 <section class="sec"><h2>Progress</h2><div class="card">${progress(['Recipient', 'Occasion', 'Budget', 'Interests', 'Picks'], 2)}</div></section>
-<section class="sec"><h2>Product card & modal</h2><div class="grid">${prod(
-    'Hand-poured soy candle set',
-    ['Local artisan', 'Personalise'],
-    '₹899',
-    'sun',
-    'peach'
-  )}<div class="card"><h3>Modal</h3><p class="mut">Used for confirmations, such as saving a gift.</p><button class="btn sec" data-open>Open modal</button></div></div></section>
+<section class="sec"><h2>Product card & modal</h2><div class="grid"><ul class="rl">${pcard(PR.find(p => p.id === 'candle'))}</ul><div class="card"><h3>Modal</h3><p class="mut">Used for confirmations, such as saving a gift.</p><button class="btn sec" data-open>Open modal</button></div></div></section>
 <section class="sec"><h2>Status messages</h2>${msg('ok', 'check', 'Your gift is saved.')}${msg('info', 'info', 'Delivery to Pune takes 2–3 days.')}${msg(
     'warn',
     'alert',
@@ -1919,17 +2358,32 @@ function render(k) {
   $('#hdr').classList.toggle('hide', w);
   $('#ft').classList.toggle('hide', w);
 
-  // Parse query params if any (e.g. #browse?cat=plants)
-  if (hashRaw.includes('?')) {
+  // Browse links can preset a filter (e.g. #browse?cat=plants)
+  if (h === 'browse' && hashRaw.includes('?')) {
     const params = new URLSearchParams(hashRaw.split('?')[1]);
-    if (params.has('cat')) R.cat = params.get('cat');
+    B = { ...B0, sort: B.sort };
+    if (CATS.some(c => c[0] === params.get('cat'))) B.cat = params.get('cat');
+    if (+params.get('del')) B.del = +params.get('del');
+    if (params.has('hd')) B.hd = 1;
+    svB();
+    history.replaceState(null, '', '#browse');
+  }
+
+  const prevH = render.h;
+  if (k !== true) {
+    if (prevH === 'browse') render.by = scrollY;
+    render.h = h;
+    if (['recommendations', 'browse', 'saved', 'local', 'home'].includes(h)) R.from = h;
   }
 
   if (h === 'recommendations' && k !== true && R.sig !== JSON.stringify(F)) {
     R.sig = JSON.stringify(F);
     loadR();
   }
-  if (k !== true) R.er = null;
+  if (k !== true) {
+    R.er = null;
+    R.undo = null;
+  }
 
   let html;
   if (V[h]) html = V[h]();
@@ -1947,8 +2401,12 @@ function render(k) {
   $('#fab').innerHTML = S.voice && !w ? `<button class="btn" data-listen="fab">${ic('mic', 22)} ${tr('lis', 'Listen')}</button><div id="vp" aria-live="polite"></div>` : '';
 
   // Update header cart badge
+  $('#ordersbtn').innerHTML = ic('box', 22);
+  h === 'orders' || h === 'order' ? $('#ordersbtn').setAttribute('aria-current', 'page') : $('#ordersbtn').removeAttribute('aria-current');
   const cartBtn = $('#cart');
-  cartBtn.innerHTML = ic('bag', 22) + (CART.length ? `<span class="badge-dot">${CART.length}</span>` : '');
+  const cartN = cartTotals().count;
+  cartBtn.innerHTML = ic('bag', 22) + (cartN ? `<span class="badge-dot" aria-hidden="true">${cartN}</span>` : '');
+  cartBtn.setAttribute('aria-label', cartN ? `Cart, ${cartN} ${cartN === 1 ? 'item' : 'items'}` : 'Cart, empty');
 
   $('#nav').innerHTML = NAV.map(
     n =>
@@ -1960,20 +2418,20 @@ function render(k) {
   ).join('');
   if (window.innerWidth >= 820) $('#nav').scrollLeft = 0;
 
-  $('#ft').innerHTML = `<div class="wrap"><div class="cols"><div class="ft-brand"><div class="row" style="align-items:center;gap:12px;margin-bottom:12px"><img src="images/logo.png" alt="आपुलकी Logo" class="ft-logo"><div style="line-height:1.2"><b style="font:700 22px 'Noto Sans Devanagari',Nunito,sans-serif;display:block">आपुलकी</b> <span style="font-weight:700;color:var(--mut)">Aapulki</span></div></div><p class="mut">Gifts that carry a little love. Celebrate every bond.</p></div><div><b>Explore</b><a href="#finder">Gift Finder</a><a href="#occasions">Occasions</a><a href="#saved">Saved Gifts</a></div><div><b>Help</b><a href="#profile">Profile & Settings</a><a href="#access">Accessibility</a></div></div><p class="help" style="margin:24px 0 0">© 2026 Aapulki. Made with a little love.</p></div>`;
-  const TITLES = { home: 'Home', finder: 'Gift Finder', together: 'Gift Together', local: 'Sustainable & Local Gifts', corporate: 'Corporate Gifting', occasions: 'Occasions', recipients: 'Recipients', saved: 'Saved Gifts', profile: 'Profile & Settings', access: 'Accessibility' };
+  $('#ft').innerHTML = `<div class="wrap"><div class="cols"><div class="ft-brand"><div class="row" style="align-items:center;gap:12px;margin-bottom:12px"><img src="images/logo.png" alt="आपुलकी Logo" class="ft-logo"><div style="line-height:1.2"><b style="font:700 22px 'Noto Sans Devanagari',Nunito,sans-serif;display:block">आपुलकी</b> <span style="font-weight:700;color:var(--mut)">Aapulki</span></div></div><p class="mut">Gifts that carry a little love. Celebrate every bond.</p></div><div><b>Explore</b><a href="#finder">Gift Finder</a><a href="#browse">Browse Gifts</a><a href="#occasions">Occasions</a><a href="#saved">Saved Gifts</a></div><div><b>Help</b><a href="#orders">My Orders</a><a href="#cart">Cart</a><a href="#profile">Profile & Settings</a><a href="#access">Accessibility</a></div></div><p class="help" style="margin:24px 0 0;color:var(--ink)">Prototype store: products, prices, stock, ratings and delivery dates are sample data. No real payments or deliveries.</p><p class="help" style="margin:4px 0 0;color:var(--ink)">© 2026 Aapulki. Made with a little love.</p></div>`;
+  const TITLES = { orders: 'My Orders', order: 'Order details', cart: 'Cart', checkout: 'Checkout', 'order-success': 'Order confirmation', browse: 'Browse Gifts', recommendations: 'Your gift picks', product: 'Gift details', personalize: 'Personalize', card: 'Greeting card', preview: 'Preview', home: 'Home', finder: 'Gift Finder', together: 'Gift Together', local: 'Sustainable & Local Gifts', corporate: 'Corporate Gifting', occasions: 'Occasions', recipients: 'Recipients', saved: 'Saved Gifts', profile: 'Profile & Settings', access: 'Accessibility' };
   document.title = w ? 'आपुलकी (Aapulki)' : 'आपुलकी · ' + (TITLES[h] || h);
 
   if (k !== true) {
-    scrollTo(0, 0);
+    scrollTo(0, h === 'browse' && prevH === 'product' ? render.by || 0 : 0);
     if (render.n++) $('#app').focus({ preventScroll: true });
   }
 }
 
-function toast(t) {
+function toast(t, kind = 'ok') {
   const e = $('#toast');
-  e.innerHTML = ic('check') + '<span>' + t + '</span>';
-  e.classList.remove('hide');
+  e.className = 'msg ' + kind;
+  e.innerHTML = ic(kind === 'ok' ? 'check' : 'alert') + '<span>' + t + '</span>';
   clearTimeout(toast.t);
   toast.t = setTimeout(() => e.classList.add('hide'), 3000);
 }
@@ -2046,8 +2504,32 @@ document.addEventListener('click', e => {
   // Browse category filter
   const bcat = e.target.closest('[data-bcat]');
   if (bcat) {
-    R.cat = bcat.dataset.bcat;
-    rr();
+    B.cat = bcat.dataset.bcat;
+    svB();
+    rr(bcat.id);
+    return;
+  }
+  const bt = e.target.closest('[data-bt]');
+  if (bt) {
+    B[bt.dataset.bt] = B[bt.dataset.bt] ? 0 : 1;
+    svB();
+    rr(bt.id);
+    return;
+  }
+  const brm = e.target.closest('[data-brm]');
+  if (brm) {
+    B[brm.dataset.brm] = B0[brm.dataset.brm];
+    svB();
+    rr('bsort');
+    say('Filter removed. ' + bList().length + ' gifts shown.');
+    return;
+  }
+  if (e.target.closest('[data-bclear]')) {
+    B = { ...B0, sort: B.sort };
+    svB();
+    rr('bq');
+    toast('Filters cleared.');
+    say(bList().length + ' gifts shown.');
     return;
   }
 
@@ -2062,20 +2544,26 @@ document.addEventListener('click', e => {
   // Delete Occasion
   const docc = e.target.closest('[data-delocc]');
   if (docc) {
-    OCCASIONS = OCCASIONS.filter(o => o.id !== docc.dataset.delocc);
-    sp();
-    rr();
-    toast('Occasion deleted.');
+    const oc = OCCASIONS.find(o => o.id === docc.dataset.delocc);
+    confirmDlg('Delete this occasion?', esc(oc ? oc.name : '') + ' will be removed from your list.', 'Delete Occasion', 'Keep It', () => {
+      OCCASIONS = OCCASIONS.filter(o => o !== oc);
+      sp();
+      rr('addocc');
+      toast('Occasion deleted.');
+    });
     return;
   }
 
   // Delete Recipient
   const drec = e.target.closest('[data-delrec]');
   if (drec) {
-    RECIPIENTS = RECIPIENTS.filter(r => r.id !== drec.dataset.delrec);
-    sp();
-    rr();
-    toast('Recipient removed.');
+    const rc = RECIPIENTS.find(r => r.id === drec.dataset.delrec);
+    confirmDlg('Remove this recipient?', esc(rc ? rc.name : '') + ' will be removed from your list.', 'Remove Recipient', 'Keep Them', () => {
+      RECIPIENTS = RECIPIENTS.filter(r => r !== rc);
+      sp();
+      rr('addrec');
+      toast('Recipient removed.');
+    });
     return;
   }
 
@@ -2083,12 +2571,12 @@ document.addEventListener('click', e => {
   const mod = e.target.closest('[data-modal]');
   if (mod) {
     const type = mod.dataset.modal;
-    const dlg = $('#dlg');
     if (type === 'add-occasion') {
-      dlg.innerHTML = `
-        <h2>Add an Occasion</h2>
-        <p class="mut">Set a reminder for someone special.</p>
-        <form id="addoccform" onsubmit="event.preventDefault();addOccasionHandler();">
+      openDlg(`
+        <h2 id="dt">Add an Occasion</h2>
+        <p class="mut">Save a date for someone special. This prototype doesn’t send reminders.</p>
+        <form id="addoccform" novalidate onsubmit="event.preventDefault();addOccasionHandler();">
+          <div data-errsum></div>
           <label for="ao_name">Occasion Title</label>
           <input class="in" id="ao_name" required placeholder="e.g. Papa's 50th Birthday">
           <div style="margin-top:10px">
@@ -2107,13 +2595,9 @@ document.addEventListener('click', e => {
               </select>
             </div>
             <div>
-              <label for="ao_date">Date (e.g. 15 Nov)</label>
-              <input class="in" id="ao_date" required placeholder="15 Nov">
+              <label for="ao_date">Date</label>
+              <input class="in" id="ao_date" type="date" required>
             </div>
-          </div>
-          <div style="margin-top:10px">
-            <label for="ao_days">Days from now</label>
-            <input class="in" id="ao_days" type="number" value="14" required>
           </div>
           <div style="margin-top:10px">
             <label for="ao_note">Preferences / Gift notes</label>
@@ -2123,14 +2607,14 @@ document.addEventListener('click', e => {
             <button type="button" class="btn sec sm" data-close>Cancel</button>
             <button type="submit" class="btn sm">Save Occasion</button>
           </div>
-        </form>`;
-      dlg.showModal();
+        </form>`);
       return;
     } else if (type === 'add-recipient') {
-      dlg.innerHTML = `
-        <h2>Add a Recipient</h2>
+      openDlg(`
+        <h2 id="dt">Add a Recipient</h2>
         <p class="mut">Save their preferences and gifting tastes.</p>
-        <form id="addrecform" onsubmit="event.preventDefault();addRecipientHandler();">
+        <form id="addrecform" novalidate onsubmit="event.preventDefault();addRecipientHandler();">
+          <div data-errsum></div>
           <label for="ar_name">Name</label>
           <input class="in" id="ar_name" required placeholder="e.g. Dadi">
           <div style="margin-top:10px">
@@ -2157,10 +2641,32 @@ document.addEventListener('click', e => {
             <button type="button" class="btn sec sm" data-close>Cancel</button>
             <button type="submit" class="btn sm">Save Recipient</button>
           </div>
-        </form>`;
-      dlg.showModal();
+        </form>`);
       return;
     }
+  }
+
+  if (e.target.closest('[data-editdetails]')) {
+    openDlg(`<h2 id="dt">Your delivery details</h2><p class="mut">Used to fill in checkout. Saved only on this device.</p><form id="profform" novalidate><div data-errsum></div>${chkFields(false)}<div class="row" style="margin-top:20px;justify-content:flex-end;gap:8px"><button type="button" class="btn sec sm" data-close>Cancel</button><button type="submit" class="btn sm">Save Details</button></div></form>`);
+    return;
+  }
+
+  if (e.target.closest('[data-cfmok]')) {
+    $('#dlg').close();
+    confirmDlg.fn();
+    return;
+  }
+
+  if (e.target.closest('[data-sharesplit]')) {
+    const link = location.href.split('#')[0] + `#together?cost=${+$('#gt_cost').value || 0}&people=${$('#gt_people').value}`;
+    const fail = () => {
+      $('#gt_link').innerHTML = `<label for="gt_url">Copy this link</label><input class="in" id="gt_url" readonly value="${esc(link)}">`;
+      $('#gt_url').select();
+      toast('Couldn’t copy automatically. Please copy the link below.', 'warn');
+    };
+    if (navigator.clipboard) navigator.clipboard.writeText(link).then(() => toast('Link copied. It opens this calculator with the same split.'), fail);
+    else fail();
+    return;
   }
 
   // Step progression in Finder
@@ -2178,6 +2684,10 @@ document.addEventListener('click', e => {
       er.innerHTML = `<div role="alert">${msg('warn', 'alert', m)}</div>`;
       const f = k === 'bud' && F.bud === 'custom' ? $('#cin') : document.querySelector('.opt input');
       f && f.focus();
+      return;
+    }
+    if ('jump' in nx.dataset && ready()) {
+      location.hash = '#recommendations';
       return;
     }
     location.hash = {
@@ -2201,6 +2711,41 @@ document.addEventListener('click', e => {
   const t = e.target.closest('[data-toast]');
   if (t) toast(t.dataset.toast);
 
+  if (e.target.closest('[data-ocancel]')) {
+    const o = orderOf();
+    confirmDlg(
+      'Cancel this order?',
+      `Order #${o.id} will be cancelled and this can’t be undone. This was a demo payment, so nothing was charged and nothing needs refunding.`,
+      'Yes, Cancel Order',
+      'Keep Order',
+      () => {
+        if (canCancel(o)) o.cancelled = Date.now();
+        sp();
+        rr('ohelp');
+        toast('Order cancelled.');
+      }
+    );
+    return;
+  }
+  if (e.target.closest('[data-oadvance]')) {
+    const o = orderOf();
+    o.skew = (o.skew || 0) + stgTimes(o)[ordStage(o) + 1] - ordElapsed(o) + 1000;
+    sp();
+    rr('oadv');
+    toast('Demo: status is now ' + ordStatus(o) + '.');
+    return;
+  }
+  if (e.target.closest('[data-support]')) {
+    const o = orderOf();
+    openDlg(`<h2 id="dt">Contact Support</h2><p class="mut">Order #${o.id}. Estimated delivery: by ${ordEta(o)}.</p><form id="supform" novalidate><label for="su_type">What’s wrong?</label><select class="in" id="su_type"><option>Order is delayed</option><option>Order is missing</option><option>Something else</option></select><div style="margin-top:10px"><label for="su_note">Details (optional)</label><textarea class="in" id="su_note" maxlength="300"></textarea></div><p class="help">Prototype: no support team is connected. Your request is saved with this order on this device, and nobody is contacted.</p><div class="row" style="margin-top:20px;justify-content:flex-end;gap:8px"><button type="button" class="btn sec sm" data-close>Cancel</button><button type="submit" class="btn sm">Save Request</button></div></form>`);
+    return;
+  }
+
+  if (e.target.closest('[data-placeorder]')) {
+    placeOrder();
+    return;
+  }
+
   // Direct Cart navigation
   if (e.target.closest('#cart')) {
     location.hash = '#cart';
@@ -2210,16 +2755,8 @@ document.addEventListener('click', e => {
   // Quick Add to Cart
   const addCart = e.target.closest('[data-addcart]');
   if (addCart) {
-    const id = addCart.dataset.addcart;
-    const p = PR.find(x => x.id === id);
-    const existing = CART.find(c => c.id === id);
-    if (existing) {
-      existing.qty = (existing.qty || 1) + 1;
-    } else {
-      CART.push({ id, qty: 1 });
-    }
-    sp();
-    render(true);
+    const p = addToCart(addCart.dataset.addcart);
+    rr(addCart.id);
     toast(`Added “${p ? p.n : 'Gift'}” to Cart!`);
     return;
   }
@@ -2230,51 +2767,66 @@ document.addEventListener('click', e => {
     const idx = +cqty.dataset.cartqty;
     const delta = +cqty.dataset.delta;
     if (CART[idx]) {
+      if ((CART[idx].qty || 1) + delta <= 0) {
+        removeCartLine(idx);
+        return;
+      }
       CART[idx].qty = (CART[idx].qty || 1) + delta;
-      if (CART[idx].qty <= 0) CART.splice(idx, 1);
       sp();
-      rr();
+      rr(cqty.id);
+      toast(`Quantity updated to ${CART[idx].qty}.`);
     }
     return;
   }
 
-  // Cart item removal
+  // Cart item removal, with undo
   const dcart = e.target.closest('[data-delcart]');
   if (dcart) {
-    const idx = +dcart.dataset.delcart;
-    CART.splice(idx, 1);
+    removeCartLine(+dcart.dataset.delcart);
+    return;
+  }
+  if (e.target.closest('[data-undo]') && R.undo) {
+    CART.splice(Math.min(R.undo.idx, CART.length), 0, R.undo.item);
+    R.undo = null;
     sp();
     rr();
-    toast('Item removed from cart.');
+    toast('Item restored to your cart.');
     return;
   }
 });
 
 function addOccasionHandler() {
-  const name = $('#ao_name').value;
-  const person = $('#ao_person').value;
+  const name = $('#ao_name').value.trim();
+  const person = $('#ao_person').value.trim();
   const occ = $('#ao_type').value;
-  const date = $('#ao_date').value;
-  const days = +$('#ao_days').value || 14;
-  const note = $('#ao_note').value;
-  OCCASIONS.unshift({ id: 'o_' + Date.now(), name, person, occ, date, days, note, who: 'wother' });
+  const iso = $('#ao_date').value;
+  const note = $('#ao_note').value.trim();
+  const er = {};
+  if (!name) er.ao_name = 'Please give this occasion a title.';
+  if (!person) er.ao_person = 'Please enter who it is for.';
+  if (!iso) er.ao_date = 'Please choose a date.';
+  if (!formErrs($('#addoccform'), er)) return;
+  const [y, m, d] = iso.split('-').map(Number);
+  const date = new Date(y, m - 1, d).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' });
+  OCCASIONS.unshift({ id: 'o_' + Date.now(), name, person, occ, date, iso, note, who: 'wother' });
   sp();
   $('#dlg').close();
   rr();
-  toast('Occasion saved successfully!');
+  toast('Occasion saved.');
 }
 
 function addRecipientHandler() {
-  const name = $('#ar_name').value;
+  const name = $('#ar_name').value.trim();
   const who = $('#ar_who').value;
-  const occs = $('#ar_date').value || 'Upcoming birthday';
-  const notes = $('#ar_note').value || 'Thoughtful gift preferences';
+  const occs = $('#ar_date').value.trim() || 'No date added';
+  const notes = $('#ar_note').value.trim() || 'No notes added';
+  if (!formErrs($('#addrecform'), name ? {} : { ar_name: 'Please enter their name.' })) return;
   const avatar = name.charAt(0).toUpperCase() || 'R';
   RECIPIENTS.unshift({ id: 'r_' + Date.now(), name, who, avatar, bg: 'blush', ints: ['selfcare', 'handmade'], occs, notes });
   sp();
   $('#dlg').close();
   rr();
-  toast('Recipient added successfully!');
+  toast('Recipient added.');
 }
 
 document.addEventListener('change', e => {
@@ -2300,6 +2852,76 @@ document.addEventListener('change', e => {
   svF();
   const er = $('#ferr');
   if (er) er.innerHTML = '';
+});
+
+document.addEventListener('submit', e => {
+  if (e.target.id === 'profform') {
+    e.preventDefault();
+    const v = {};
+    ['name', 'phone', 'addr', 'city', 'pin'].forEach(k => (v[k] = $('#c_' + k).value));
+    if (!formErrs(e.target, prefix(vC(v), 'c_'))) return;
+    Object.assign(CHK, v);
+    sp();
+    $('#dlg').close();
+    rr();
+    toast('Details saved on this device.');
+    return;
+  }
+  if (e.target.id === 'supform') {
+    e.preventDefault();
+    const o = orderOf();
+    o.support = o.support || [];
+    o.support.push({ type: $('#su_type').value, note: $('#su_note').value.trim(), at: Date.now() });
+    sp();
+    $('#dlg').close();
+    rr('ohelp');
+    toast('Request saved on this device. Nobody has been contacted.');
+    return;
+  }
+  if (e.target.id === 'coform') {
+    e.preventDefault();
+    const er = {};
+    if (!$('#co_name').value.trim()) er.co_name = 'Please enter your company name.';
+    if (!(+$('#co_cnt').value > 0)) er.co_cnt = 'Please enter how many gifts you need, for example 50.';
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test($('#co_email').value.trim())) er.co_email = 'Please enter a valid email, for example hr@company.com.';
+    if (formErrs(e.target, er)) toast('Your details look good, but this prototype didn’t send them to anyone.', 'warn');
+    return;
+  }
+  if (e.target.id !== 'chkform') return;
+  e.preventDefault();
+  if (formErrs(e.target, prefix(vC(CHK), 'c_'))) {
+    sp();
+    location.hash = '#checkout/review';
+  }
+});
+
+document.addEventListener('input', e => {
+  const k = e.target.dataset.chk;
+  if (!k) return;
+  CHK[k] = e.target.value;
+  sp();
+  if (e.target.classList.contains('err') && !vC(CHK)[k]) fieldErr(e.target, '');
+});
+
+document.addEventListener('focusout', e => {
+  const k = e.target.dataset && e.target.dataset.chk;
+  if (k && CHK[k]) fieldErr(e.target, vC(CHK)[k] || '');
+});
+
+document.addEventListener('change', e => {
+  if (e.target.name === 'pay') {
+    CHK.pay = e.target.value;
+    sp();
+  }
+});
+
+document.addEventListener('input', e => {
+  if (e.target.id !== 'bq') return;
+  B.q = e.target.value;
+  svB();
+  $('#bres').innerHTML = browseBody();
+  clearTimeout(say.q);
+  say.q = setTimeout(() => say(bList().length + ' gifts shown.'), 500);
 });
 
 document.addEventListener('input', e => {
@@ -2357,10 +2979,25 @@ document.addEventListener('click', e => {
     cnt();
     return;
   }
+  if ((x = c('[data-rrm]'))) {
+    const k = x.dataset.rrm;
+    R[k] = k === 'cat' ? '' : k === 'ints' ? null : 0;
+    rr('rsort');
+    cnt();
+    return;
+  }
   if (c('[data-fclear]')) {
     Object.assign(R, { cat: '', del: 0, ints: null, pe: 0, hd: 0, lc: 0, su: 0 });
     rr('fbtn');
+    toast('Filters cleared.');
     cnt();
+    return;
+  }
+  if ((x = c('[data-rband]'))) {
+    R.bud = x.dataset.rband === F.bud ? '' : x.dataset.rband;
+    rr('fbtn');
+    cnt();
+    toast('Budget changed to ' + bl(x.dataset.rband) + '.');
     return;
   }
   if (c('[data-rrestore]')) {
@@ -2393,7 +3030,16 @@ document.addEventListener('change', e => {
   if (id === 'fcat') R.cat = r.value;
   else if (id === 'fbud') R.bud = r.value === F.bud ? '' : r.value;
   else if (id === 'fdel') R.del = +r.value;
-  else return;
+  else if (id === 'rsort') R.sort = r.value;
+  else if (['bsort', 'bbud', 'bdel'].includes(id)) {
+    if (id === 'bsort') B.sort = r.value;
+    if (id === 'bbud') B.bud = r.value;
+    if (id === 'bdel') B.del = +r.value;
+    svB();
+    rr(id);
+    say(bList().length + ' gifts shown.');
+    return;
+  } else return;
   rr(id);
   cnt();
 });
@@ -2456,18 +3102,21 @@ document.addEventListener('click', e => {
     $('#sayst').innerHTML = '';
     return;
   }
+  if (c('[data-pdatc]')) {
+    const o = PS[id] || {};
+    if (Object.keys(vP(p, o)).length) {
+      toast('Please add the name for your personalization first.', 'warn');
+      location.hash = '#personalize/' + id;
+      return;
+    }
+    addToCart(id, o);
+    rr('pdatc');
+    toast(`Added “${p.n}” to Cart!`);
+    return;
+  }
   if (c('[data-atc]')) {
-    const curOpts = PS[id] || {};
-    CART.push({
-      id,
-      qty: 1,
-      pe: !!curOpts.pe,
-      nm: curOpts.nm,
-      ln: curOpts.ln,
-      wr: !!curOpts.wr,
-      ws: curOpts.ws || 'festive'
-    });
-    sp();
+    addToCart(id, PS[id] || {});
+    toast(`Added “${p.n}” to Cart!`);
     location.hash = '#cart';
     return;
   }
@@ -2491,6 +3140,8 @@ document.addEventListener('input', e => {
   }
   if (g('lp')) g('lp').innerHTML = gcard(o);
   if (g('nmprev')) g('nmprev').innerHTML = plate(o);
+  const sp0 = PR.find(q => q.id === pid());
+  if (g('selsum') && sp0) g('selsum').innerHTML = selRows(sp0, o);
 });
 
 document.addEventListener('change', e => {
